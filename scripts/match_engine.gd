@@ -5,6 +5,7 @@ const Generator = preload("res://scripts/level_generator.gd")
 const COLOR_COUNT := 6
 const DIRECTIONS := [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
 const MAX_CASCADES := 64
+const COLOR_NAMES := ["рубины", "аметисты", "изумруды", "сапфиры", "янтарь", "лунные камни"]
 
 var level_data: Dictionary = {}
 var width := 0
@@ -15,28 +16,122 @@ var score := 0
 var moves := 0
 var collected: Dictionary = {}
 var rng := RandomNumberGenerator.new()
+var altars: Dictionary = {}
+var boss_hp := 0
+var boss_max_hp := 0
+var valid_turns := 0
+var bonuses: Dictionary = {}
+var _original_seals: Dictionary = {}
+var _seals_destroyed := 0
 
-func initialize(level: int) -> void:
+func initialize(level: int, battle_bonuses: Dictionary = {}) -> void:
 	level_data = Generator.generate(level)
 	width = level_data.width
 	height = level_data.height
 	blockers = level_data.blockers.duplicate(true)
-	moves = level_data.moves
+	bonuses = {
+		"bonus_moves": _bounded_bonus(battle_bonuses.get("bonus_moves", 0), 3),
+		"starting_specials": _bounded_bonus(battle_bonuses.get("starting_specials", 0), 2),
+		"boss_damage_bonus": _bounded_bonus(battle_bonuses.get("boss_damage_bonus", 0), 2),
+	}
+	moves = int(level_data.moves) + int(bonuses.bonus_moves)
 	score = 0
+	valid_turns = 0
+	_seals_destroyed = 0
+	_original_seals = blockers.duplicate(true)
+	altars.clear()
+	for position in level_data.altars:
+		altars[position] = false
+	boss_max_hp = int(level_data.boss.get("hp", 0))
+	boss_hp = boss_max_hp
 	collected.clear()
 	for color in range(COLOR_COUNT):
 		collected[color] = 0
 	rng.seed = level_data.seed
 	_randomize_board(false)
+	var candidates: Array = []
+	for position in cells:
+		if _open(position):
+			candidates.append(position)
+	for index in range(int(bonuses.starting_specials)):
+		if candidates.is_empty():
+			break
+		var chosen: int = rng.randi_range(0, candidates.size() - 1)
+		var position: Vector2i = candidates.pop_at(chosen)
+		cells[position].special = "row" if index == 0 else "bomb"
+
+func _bounded_bonus(value: Variant, maximum: int) -> int:
+	if value is int or value is float:
+		if is_finite(float(value)):
+			return clampi(int(value), 0, maximum)
+	return 0
 
 func is_won() -> bool:
-	return not level_data.is_empty() and score >= int(level_data.target)
+	if level_data.is_empty():
+		return false
+	var state: Dictionary = objective_state()
+	return bool(state.complete)
+
+func objective_state() -> Dictionary:
+	var objective: Dictionary = level_data.get("objective", {"kind": "score", "target": level_data.get("target", 1), "color": 0})
+	var kind: String = objective.get("kind", "score")
+	var target: int = int(objective.get("target", 1))
+	var color: int = clampi(int(objective.get("color", 0)), 0, COLOR_COUNT - 1)
+	var current := 0
+	var description := "Наберите силу осколков"
+	match kind:
+		"score": current = score
+		"collect":
+			current = int(collected.get(color, 0))
+			description = "Соберите " + COLOR_NAMES[color]
+		"seals":
+			current = _seals_destroyed
+			description = "Разрушьте печати леса"
+		"altars":
+			for charged in altars.values():
+				if charged:
+					current += 1
+			description = "Зарядите древние алтари"
+		"boss":
+			current = boss_max_hp - boss_hp
+			description = "Страж корней · уязвимость: " + COLOR_NAMES[color]
+	var attack_every: int = int(level_data.get("boss", {}).get("attack_every", 3))
+	return {
+		"kind": kind, "current": current, "target": target,
+		"complete": target > 0 and current >= target, "color": color,
+		"description": description, "boss_hp": boss_hp, "boss_max_hp": boss_max_hp,
+		"attack_in": attack_every - valid_turns % attack_every if kind == "boss" and boss_hp > 0 else 0,
+		"altars": altars.duplicate(true), "turns": valid_turns,
+		"seals_destroyed": _seals_destroyed,
+	}
 
 func is_lost() -> bool:
 	return moves <= 0 and not is_won()
 
 func snapshot() -> Dictionary:
 	return cells.duplicate(true)
+
+## Used for reproducible previews, tactical hints and balance simulations.
+func clone_model() -> RefCounted:
+	var copy = get_script().new()
+	copy.level_data = level_data.duplicate(true)
+	copy.width = width
+	copy.height = height
+	copy.cells = snapshot()
+	copy.blockers = blockers.duplicate(true)
+	copy.score = score
+	copy.moves = moves
+	copy.collected = collected.duplicate(true)
+	copy.altars = altars.duplicate(true)
+	copy.boss_hp = boss_hp
+	copy.boss_max_hp = boss_max_hp
+	copy.valid_turns = valid_turns
+	copy.bonuses = bonuses.duplicate(true)
+	copy._original_seals = _original_seals.duplicate(true)
+	copy._seals_destroyed = _seals_destroyed
+	copy.rng.seed = rng.seed
+	copy.rng.state = rng.state
+	return copy
 
 func _open(position: Vector2i) -> bool:
 	return cells.has(position) and not blockers.has(position)
@@ -159,6 +254,7 @@ func try_swap(first: Vector2i, second: Vector2i) -> Dictionary:
 		return result
 	result.valid = true
 	moves -= 1
+	valid_turns += 1
 	var previous_score := score
 	var nova_targets: Dictionary = {}
 	if cells[first].special == "nova":
@@ -178,6 +274,10 @@ func try_swap(first: Vector2i, second: Vector2i) -> Dictionary:
 		shuffle()
 		result.shuffled = true
 		result.shuffle_board = snapshot()
+	if level_data.objective.kind == "boss" and not is_won() and not is_lost():
+		var attack_every: int = level_data.boss.attack_every
+		if valid_turns % attack_every == 0:
+			result.steps.append(_boss_attack())
 	result.score_delta = score - previous_score
 	result.won = is_won()
 	result.lost = is_lost()
@@ -225,6 +325,10 @@ func _resolve(groups: Array, special_positions: Array, nova_targets: Dictionary,
 	var activated: Array = []
 	var seen: Dictionary = {}
 	var direct_blockers: Dictionary = {}
+	var altar_hits: Dictionary = {}
+	for group in groups:
+		for position in group.cells:
+			altar_hits[position] = true
 	while not pending.is_empty():
 		var position: Vector2i = pending.pop_front()
 		if seen.has(position) or not _open(position):
@@ -253,6 +357,8 @@ func _resolve(groups: Array, special_positions: Array, nova_targets: Dictionary,
 					if target < 0 or int(cells[tile_position].color) == target:
 						affected.append(tile_position)
 		for target_position in affected:
+			if cells.has(target_position):
+				altar_hits[target_position] = true
 			if blockers.has(target_position):
 				direct_blockers[target_position] = true
 			elif cells.has(target_position) and not protected.has(target_position):
@@ -271,6 +377,9 @@ func _resolve(groups: Array, special_positions: Array, nova_targets: Dictionary,
 		blocker_hits.append(position)
 		if blockers[position] <= 0:
 			blockers.erase(position)
+			if _original_seals.has(position):
+				_original_seals.erase(position)
+				_seals_destroyed += 1
 			score += 30 * combo
 	var details: Array = []
 	for position in removed:
@@ -282,12 +391,51 @@ func _resolve(groups: Array, special_positions: Array, nova_targets: Dictionary,
 	for entry in spawned:
 		cells[entry.position] = {"color": entry.color, "special": entry.special}
 		score += 20 * combo
+	for position in altar_hits:
+		if altars.has(position):
+			altars[position] = true
+	var boss_damage := 0
+	if level_data.objective.kind == "boss" and boss_hp > 0:
+		var weak_color: int = int(level_data.boss.weak_color)
+		for crystal in details:
+			if int(crystal.color) == weak_color:
+				boss_damage += 1
+		boss_damage += activated.size() * 4
+		if boss_damage > 0:
+			boss_damage += int(bonuses.get("boss_damage_bonus", 0))
+			boss_damage = mini(boss_hp, boss_damage)
+			boss_hp -= boss_damage
 	_refill()
 	return {
 		"removed": removed.keys(), "removed_details": details,
 		"activated": activated, "spawned": spawned,
 		"blocker_hits": blocker_hits, "board": snapshot(),
 		"blockers": blockers.duplicate(true), "score": score, "combo": combo,
+		"objective": objective_state(), "altars": altars.duplicate(true),
+		"boss_damage": boss_damage, "boss_attack": [],
+	}
+
+func _boss_attack() -> Dictionary:
+	var attacked: Array = []
+	var candidates: Array = []
+	var cap: int = maxi(4, level_data.mask.size() / 5)
+	for position in cells:
+		if _open(position) and cells[position].special == "":
+			candidates.append(position)
+	var requested: int = rng.randi_range(1, 2)
+	while attacked.size() < requested and blockers.size() < cap and not candidates.is_empty():
+		var index: int = rng.randi_range(0, candidates.size() - 1)
+		var position: Vector2i = candidates.pop_at(index)
+		blockers[position] = 1
+		if legal_moves().is_empty():
+			blockers.erase(position)
+			continue
+		attacked.append(position)
+	return {
+		"removed": [], "removed_details": [], "activated": [], "spawned": [],
+		"blocker_hits": [], "board": snapshot(), "blockers": blockers.duplicate(true),
+		"score": score, "combo": 0, "objective": objective_state(),
+		"altars": altars.duplicate(true), "boss_damage": 0, "boss_attack": attacked,
 	}
 
 ## Holes and sealed crystals divide columns into independent gravity segments.

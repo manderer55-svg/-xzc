@@ -85,6 +85,7 @@ func _fixture(width: int = 7, height: int = 7):
 			engine.cells[position] = {"color": (x + y * 2) % 6, "special": ""}
 	engine.level_data.mask = mask
 	engine.level_data.target = 999999
+	engine.level_data.objective = {"kind": "score", "target": 999999, "color": 0}
 	return engine
 
 func _test_swap_rules() -> void:

@@ -11,39 +11,70 @@ const GEM_NAMES := ["gem_0", "gem_1", "gem_2", "gem_3", "gem_4", "gem_5",
 	"blocker_stone", "blocker_ice", "cell", "selection", "coin", "portal"]
 const BUILDING_NAMES := ["ground", "quarry", "sawmill", "shrine", "fortress",
 	"stone", "wood", "essence", "settlement_portal"]
+const POWER_NAMES := ["special_row", "special_column", "special_bomb", "special_nova"]
+const CAMPAIGN_NAMES := ["boss_portrait", "altar", "altar_lit", "forest_badge"]
+const SEAL_NAMES := ["blocker_stone", "blocker_ice", "selection", "coin"]
+## A common selection preserves every visible crystal face and its proportions.
+## The originals remain untouched; only transparent atlas gutters are omitted.
+const GEM_REGION := Rect2(16, 0, 480, 480)
+const DIGIT_REGIONS := [Rect2(77, 33, 266, 310), Rect2(449, 28, 200, 313),
+	Rect2(772, 31, 251, 307), Rect2(1126, 29, 244, 318), Rect2(71, 388, 269, 316),
+	Rect2(433, 388, 240, 318), Rect2(766, 388, 260, 320), Rect2(1135, 389, 238, 311),
+	Rect2(69, 733, 264, 319), Rect2(425, 730, 254, 319), Rect2(759, 757, 283, 272),
+	Rect2(1116, 773, 256, 249)]
 const UI_REGIONS := {
-	"ui_header": Rect2(8, 0, 684, 315),
-	"ui_panel": Rect2(696, 58, 558, 251),
-	"ui_button": Rect2(10, 350, 680, 203),
-	"ui_small_button": Rect2(700, 377, 544, 184),
-	"ui_result": Rect2(14, 548, 680, 365),
-	"ui_badge": Rect2(694, 650, 550, 216),
-	"ui_progress": Rect2(13, 992, 725, 170),
-	"ui_slot": Rect2(812, 910, 294, 294),
+	"ui_header": Rect2(29, 124, 381, 128),
+	"ui_panel": Rect2(435, 100, 387, 174),
+	"ui_button": Rect2(847, 120, 381, 140),
+	"ui_small_button": Rect2(29, 527, 382, 141),
+	"ui_result": Rect2(436, 414, 385, 361),
+	"ui_badge": Rect2(847, 498, 381, 194),
+	"ui_progress": Rect2(29, 963, 381, 78),
+	"ui_progress_fill": Rect2(877, 148, 319, 84),
+	"ui_slot": Rect2(438, 819, 378, 365),
+	"cell": Rect2(850, 817, 375, 365),
 }
 
 static func texture(asset_name: String) -> Texture2D:
 	if _cache.has(asset_name):
 		return _cache[asset_name]
 	var result: Texture2D
-	if asset_name in ["background", "settlement_background", "icon"]:
+	if asset_name in ["background", "settlement_background", "icon", "board_frame", "forest_background", "home_background"]:
 		result = load(ROOT + asset_name + ".png") as Texture2D
+	elif asset_name.begins_with("gem_") and asset_name.trim_prefix("gem_").is_valid_int():
+		var source := _atlas("gems_clean")
+		var gem_index := int(asset_name.trim_prefix("gem_"))
+		var cell_size := source.get_size() / Vector2(3, 2)
+		var origin := Vector2(gem_index % 3, int(gem_index / 3)) * cell_size
+		var ratio := source.get_size() / Vector2(1536, 1024)
+		result = _region(source, Rect2(origin + GEM_REGION.position * ratio, GEM_REGION.size * ratio))
+	elif POWER_NAMES.has(asset_name):
+		result = _grid_region("powers_readable", POWER_NAMES.find(asset_name), 2, 2)
+	elif CAMPAIGN_NAMES.has(asset_name):
+		result = _grid_region("campaign", CAMPAIGN_NAMES.find(asset_name), 2, 2)
+	elif SEAL_NAMES.has(asset_name):
+		result = _grid_region("seals_clean", SEAL_NAMES.find(asset_name), 2, 2)
+	elif UI_REGIONS.has(asset_name):
+		var source := _atlas("ui_clean")
+		var source_rect: Rect2 = UI_REGIONS[asset_name]
+		var ratio := source.get_size() / Vector2(1254, 1254)
+		result = _region(source, Rect2(source_rect.position * ratio, source_rect.size * ratio))
 	elif GEM_NAMES.has(asset_name):
 		result = _grid_region("gems", GEM_NAMES.find(asset_name), 4, 4)
 	elif BUILDING_NAMES.has(asset_name):
 		result = _grid_region("settlement", BUILDING_NAMES.find(asset_name), 3, 3)
-	elif UI_REGIONS.has(asset_name):
-		var source := _atlas("ui")
-		var source_rect: Rect2 = UI_REGIONS[asset_name]
-		var ratio := source.get_size() / Vector2(1254, 1254)
-		result = _region(source, Rect2(source_rect.position * ratio, source_rect.size * ratio))
 	elif asset_name.begins_with("fx_"):
 		var parts := asset_name.split("_")
 		var kinds := ["explosion", "lightning", "frost", "dust"]
 		if parts.size() == 3 and kinds.has(parts[1]):
 			result = _grid_region("effects", kinds.find(parts[1]) * 4 + int(parts[2]), 4, 4)
 	elif asset_name.begins_with("digit_"):
-		result = _grid_region("digits", int(asset_name.trim_prefix("digit_")), 4, 3)
+		var source := _atlas("digits_clean")
+		var digit_index := int(asset_name.trim_prefix("digit_"))
+		if digit_index >= 0 and digit_index < DIGIT_REGIONS.size():
+			var bounds: Rect2 = DIGIT_REGIONS[digit_index]
+			var ratio := source.get_size() / Vector2(1448, 1086)
+			result = _region(source, Rect2(bounds.position * ratio, bounds.size * ratio))
 	if result == null:
 		push_error("Unknown generated asset: " + asset_name)
 		return null

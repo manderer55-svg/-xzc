@@ -8,7 +8,8 @@ const IVORY := Color("eee7d9")
 const MUTED := Color("b8ac99")
 const UI_FONT: Font = preload("res://art/fonts/DejaVuSans.ttf")
 const UI_FONT_BOLD: Font = preload("res://art/fonts/DejaVuSans-Bold.ttf")
-const GEM_NAMES := ["Рубин", "Сапфир", "Изумруд", "Аметист", "Янтарь", "Лунный камень"]
+const TITLE_FONT: Font = preload("res://art/fonts/DejaVuSerif-Bold.ttf")
+const GEM_NAMES := ["Рубин", "Аметист", "Изумруд", "Сапфир", "Янтарь", "Лунный камень"]
 const BUILDING_KEYS := ["quarry", "sawmill", "shrine", "fortress"]
 const BUILDING_NAMES := ["Каменоломня", "Лесопилка", "Святилище", "Крепость"]
 
@@ -29,14 +30,31 @@ var tile_nodes: Dictionary = {}
 var tile_snapshot: Dictionary = {}
 var running_tweens: Array[Tween] = []
 var turn_generation := 0
-var current_screen := "game"
+var current_screen := "home"
+var settlement_origin := "home"
+var home_after_turn := false
+var home_time := 0.0
 var selected_slot := 4
 var selected_kind := 0
 var choosing_level := 1
 var reward_banked := false
 var last_rewards: Dictionary = {}
+var entry_bonuses: Dictionary = {}
 var texture_hit_masks: Dictionary = {}
+var gem_pool: Array[GemView] = []
+var cell_nodes: Dictionary = {}
+var altar_nodes: Dictionary = {}
+var fx_pool: EffectPool
+var hint_tween: Tween
+var hint_serial := 0
+var hint_searching := false
+var paused_gesture := false
 
+var home_screen: Control
+var home_background: TextureRect
+var home_continue: TextureButton
+var home_level_number: GeneratedNumber
+var home_region_label: Label
 var game_screen: Control
 var settlement_screen: Control
 var cells_layer: Control
@@ -59,6 +77,7 @@ var slot_detail: Label
 var settlement_status: Label
 var build_button: TextureButton
 var upgrade_button: TextureButton
+var settlement_return_button: TextureButton
 var modal: Control
 var modal_title: Label
 var modal_body: Label
@@ -67,6 +86,17 @@ var modal_secondary: TextureButton
 var level_modal: Control
 var level_choice_label: GeneratedNumber
 var end_won := false
+var mission_icon: TextureRect
+var objective_number: GeneratedNumber
+var mission_description: Label
+var boss_timer_label: Label
+var game_background: TextureRect
+var utility_modal: Control
+var utility_title: Label
+var utility_body: Label
+var reduced_button: TextureButton
+var haptics_button: TextureButton
+var utility_mode := "help"
 
 
 func _ready() -> void:
@@ -79,12 +109,15 @@ func _ready() -> void:
 	store.load_progress()
 	settlement = SettlementModel.new()
 	settlement.configure(store)
+	_build_home_screen()
 	_build_game_screen()
 	_build_settlement_screen()
 	_build_result_modal()
 	_build_level_modal()
+	_build_utility_modal()
 	active_level = maxi(1, int(store.data.get("level", 1)))
 	_load_level(active_level)
+	_show_home()
 	if not store.last_error.is_empty():
 		status_label.text = store.last_error
 	if "--smoke" in OS.get_cmdline_user_args():
@@ -140,7 +173,7 @@ func _button(parent: Node, text_value: String, position: Vector2, dimensions: Ve
 	node.mouse_entered.connect(func(): if not node.disabled: node.modulate = Color(1.15, 1.08, 0.95))
 	node.mouse_exited.connect(func(): node.modulate = Color.WHITE)
 	parent.add_child(node)
-	_label(node, text_value, Vector2(5, 0), dimensions - Vector2(10, 0), 22 if not small else 19, GOLD, true)
+	_label(node, text_value, Vector2(12, 0), dimensions - Vector2(24, 0), 26 if not small else 24, GOLD, true)
 	return node
 
 
@@ -151,6 +184,9 @@ func _number(parent: Node, text_value: String, position: Vector2, dimensions: Ve
 	node.centered = centered
 	node.text = text_value
 	parent.add_child(node)
+	# Warm the reusable generated glyph slots before the first rendered frame.
+	node.text = "99999999"
+	node.text = text_value
 	return node
 
 
@@ -162,27 +198,101 @@ func _new_screen() -> Control:
 	return screen
 
 
+func _build_home_screen() -> void:
+	home_screen = _new_screen()
+	var background_key := "home_background" if ResourceLoader.exists("res://art/darkfantasy/home_background.png") else "forest_background"
+	home_background = _texture(home_screen, background_key, Vector2(-12, -12), CANVAS + Vector2(24, 24))
+	home_background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_label(home_screen, "ПЕПЕЛЬНЫЙ", Vector2(55, 72), Vector2(610, 73), 48, GOLD, true).add_theme_font_override("font", TITLE_FONT)
+	_label(home_screen, "ПРЕДЕЛ", Vector2(55, 137), Vector2(610, 76), 52, IVORY, true).add_theme_font_override("font", TITLE_FONT)
+	_label(home_screen, "ТЁМНОЕ ФЭНТЕЗИ · ТРИ В РЯД", Vector2(60, 225), Vector2(600, 34), 17, MUTED, true)
+	home_region_label = _label(home_screen, "ПРОКЛЯТЫЙ ЛЕС", Vector2(70, 275), Vector2(580, 43), 24, IVORY, true)
+	home_continue = _button(home_screen, "Продолжить поход", Vector2(60, 838), Vector2(600, 140), _continue_from_home)
+	for child in home_continue.get_children():
+		if child is Label:
+			child.position = Vector2(20, 17)
+			child.size = Vector2(560, 53)
+			child.add_theme_font_size_override("font_size", 30)
+	_label(home_continue, "РАЗЛОМ", Vector2(199, 81), Vector2(130, 31), 18, MUTED, true)
+	home_level_number = _number(home_continue, "1", Vector2(327, 75), Vector2(136, 43), true)
+	_button(home_screen, "Цитадель", Vector2(60, 997), Vector2(291, 112), _open_settlement, true)
+	_button(home_screen, "Правила", Vector2(369, 997), Vector2(291, 112), _open_help, true)
+	_button(home_screen, "Настройки", Vector2(60, 1125), Vector2(600, 112), _open_settings, true)
+
+
+func _process(delta: float) -> void:
+	# Motion only repositions the original generated backdrop; no artwork is drawn.
+	if current_screen != "home" or not is_instance_valid(home_background):
+		return
+	if bool(store.data.settings.reduced_effects):
+		home_background.position = Vector2(-12, -12)
+		return
+	home_time += minf(delta, 0.1)
+	home_background.position = Vector2(-12 + sin(home_time * 0.12) * 5.0, -12 + cos(home_time * 0.1) * 5.0)
+
+
+func _refresh_home() -> void:
+	home_level_number.text = str(active_level)
+	home_region_label.text = String(engine.level_data.get("region", "Проклятый лес")).to_upper()
+	_set_button_text(home_continue, "Продолжить поход")
+
+
+func _show_home() -> void:
+	if busy:
+		home_after_turn = true
+		return
+	home_after_turn = false
+	_clear_hint()
+	_reset_pointer()
+	selected = Vector2i(-1, -1)
+	selection_ring.visible = false
+	modal.visible = false
+	level_modal.visible = false
+	utility_modal.visible = false
+	current_screen = "home"
+	game_screen.visible = false
+	settlement_screen.visible = false
+	home_screen.visible = true
+	_refresh_home()
+
+
+func _continue_from_home() -> void:
+	if busy:
+		return
+	current_screen = "game"
+	home_screen.visible = false
+	settlement_screen.visible = false
+	game_screen.visible = true
+	_reset_pointer()
+	if engine.is_won() or engine.is_lost():
+		_show_result(engine.is_won())
+
+
 func _build_game_screen() -> void:
 	game_screen = _new_screen()
-	_texture(game_screen, "background", Vector2.ZERO, CANVAS)
-	_texture(game_screen, "ui_header", Vector2(20, 18), Vector2(680, 120))
-	_label(game_screen, "ПЕПЕЛЬНЫЙ ПРЕДЕЛ", Vector2(58, 35), Vector2(604, 46), 32, GOLD, true)
-	_label(game_screen, "ХРОНИКИ ОСКОЛКОВ", Vector2(80, 80), Vector2(560, 30), 15, MUTED, true)
-	level_label = _label(game_screen, "УРОВЕНЬ", Vector2(238, 121), Vector2(152, 36), 19, GOLD, true)
-	level_number = _number(game_screen, "1", Vector2(384, 117), Vector2(137, 46))
-	_button(game_screen, "Уровни", Vector2(537, 115), Vector2(156, 48), _open_level_picker, true)
-	_texture(game_screen, "ui_panel", Vector2(24, 171), Vector2(435, 111))
-	_label(game_screen, "СИЛА ОСКОЛКОВ", Vector2(64, 188), Vector2(365, 27), 14, MUTED)
-	score_label = _number(game_screen, "0", Vector2(64, 208), Vector2(165, 49))
-	target_label = _label(game_screen, "ЦЕЛЬ", Vector2(243, 215), Vector2(70, 36), 14, MUTED, true)
-	target_number = _number(game_screen, "0", Vector2(317, 208), Vector2(115, 49), true)
-	_texture(game_screen, "ui_progress", Vector2(46, 252), Vector2(390, 13)).modulate = Color(0.42, 0.40, 0.46)
-	progress_fill = _texture(game_screen, "ui_progress", Vector2(46, 252), Vector2(0, 13))
-	_texture(game_screen, "ui_panel", Vector2(475, 171), Vector2(221, 111))
-	_label(game_screen, "ХОДЫ", Vector2(490, 180), Vector2(190, 27), 15, MUTED, true)
-	moves_label = _number(game_screen, "30", Vector2(501, 208), Vector2(168, 62), true)
-	_texture(game_screen, "ui_panel", Vector2(20, 300), Vector2(680, 703))
-	shape_label = _label(game_screen, "", Vector2(50, 308), Vector2(620, 38), 17, MUTED, true)
+	game_screen.visible = false
+	game_background = _texture(game_screen, "background", Vector2.ZERO, CANVAS)
+	_texture(game_screen, "ui_header", Vector2(24, 12), Vector2(672, 99))
+	_label(game_screen, "ПЕПЕЛЬНЫЙ ПРЕДЕЛ", Vector2(60, 21), Vector2(600, 45), 30, GOLD, true)
+	level_label = _label(game_screen, "Проклятый лес · разлом", Vector2(100, 67), Vector2(386, 32), 19, IVORY, true)
+	level_number = _number(game_screen, "1", Vector2(483, 65), Vector2(148, 36))
+	_button(game_screen, "Главная", Vector2(24, 119), Vector2(210, 112), _show_home, true)
+	_button(game_screen, "Уровни", Vector2(249, 119), Vector2(210, 112), _open_level_picker, true)
+	_button(game_screen, "Правила", Vector2(474, 119), Vector2(222, 112), _open_help, true)
+	_texture(game_screen, "ui_panel", Vector2(24, 235), Vector2(440, 148))
+	mission_icon = _texture(game_screen, "gem_0", Vector2(50, 262), Vector2(69, 69))
+	mission_description = _label(game_screen, "", Vector2(127, 249), Vector2(303, 49), 21, IVORY)
+	mission_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	objective_number = _number(game_screen, "0", Vector2(127, 300), Vector2(108, 46))
+	_label(game_screen, "/", Vector2(237, 303), Vector2(23, 38), 23, MUTED, true)
+	target_number = _number(game_screen, "0", Vector2(265, 300), Vector2(168, 46))
+	_texture(game_screen, "ui_progress", Vector2(53, 355), Vector2(379, 15)).modulate = Color(0.3, 0.3, 0.35)
+	progress_fill = _texture(game_screen, "ui_progress_fill", Vector2(53, 355), Vector2(0, 15))
+	_texture(game_screen, "ui_panel", Vector2(478, 235), Vector2(218, 148))
+	_label(game_screen, "ХОДЫ", Vector2(494, 252), Vector2(186, 30), 19, MUTED, true)
+	moves_label = _number(game_screen, "30", Vector2(506, 286), Vector2(162, 70), true)
+	shape_label = _label(game_screen, "", Vector2(38, 384), Vector2(644, 31), 18, IVORY, true)
+	_texture(game_screen, "ui_result", Vector2(28, 413), Vector2(664, 595))
 	cells_layer = Control.new()
 	gems_layer = Control.new()
 	effects_layer = Control.new()
@@ -190,14 +300,33 @@ func _build_game_screen() -> void:
 		layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		layer.size = CANVAS
 		game_screen.add_child(layer)
+	for y in range(9):
+		for x in range(9):
+			var cell := Vector2i(x, y)
+			cell_nodes[cell] = _texture(cells_layer, "cell", Vector2.ZERO, Vector2.ONE)
+			cell_nodes[cell].visible = false
+			cell_nodes[cell].modulate = Color(0.54, 0.55, 0.62)
+			altar_nodes[cell] = _texture(cells_layer, "altar", Vector2.ZERO, Vector2.ONE)
+			altar_nodes[cell].visible = false
+	for index in range(81):
+		var gem := GemView.new()
+		gems_layer.add_child(gem)
+		gem.visible = false
+		gem_pool.append(gem)
+	fx_pool = EffectPool.new()
+	effects_layer.add_child(fx_pool)
+	fx_pool.configure(bool(store.data.settings.reduced_effects))
 	selection_ring = _texture(effects_layer, "selection", Vector2.ZERO, Vector2(72, 72))
 	selection_ring.visible = false
-	status_label = _label(game_screen, "Соедините три кристалла. Четыре создают молнию.", Vector2(30, 1015), Vector2(660, 52), 18, MUTED, true)
+	_label(game_screen, "ОЧКИ", Vector2(32, 1010), Vector2(79, 31), 16, MUTED)
+	score_label = _number(game_screen, "0", Vector2(107, 1007), Vector2(146, 43))
+	status_label = _label(game_screen, "", Vector2(273, 1009), Vector2(419, 45), 18, IVORY, true)
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_button(game_screen, "Подсказка", Vector2(24, 1090), Vector2(207, 77), _show_hint)
-	_button(game_screen, "Заново", Vector2(248, 1090), Vector2(207, 77), _retry)
-	_button(game_screen, "Цитадель", Vector2(472, 1090), Vector2(224, 77), _open_settlement)
-	_label(game_screen, "Проведите по фишке или коснитесь двух соседних.", Vector2(42, 1188), Vector2(636, 42), 17, MUTED, true)
+	boss_timer_label = _label(game_screen, "", Vector2(30, 1189), Vector2(660, 57), 19, IVORY, true)
+	boss_timer_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_button(game_screen, "Подсказка", Vector2(24, 1063), Vector2(207, 112), _show_hint)
+	_button(game_screen, "Заново", Vector2(248, 1063), Vector2(207, 112), _retry)
+	_button(game_screen, "Цитадель", Vector2(472, 1063), Vector2(224, 112), _open_settlement)
 
 
 func _build_settlement_screen() -> void:
@@ -205,7 +334,7 @@ func _build_settlement_screen() -> void:
 	settlement_screen.visible = false
 	_texture(settlement_screen, "settlement_background", Vector2.ZERO, CANVAS)
 	_texture(settlement_screen, "ui_header", Vector2(20, 18), Vector2(680, 120))
-	_label(settlement_screen, "ЦИТАДЕЛЬ ПЕПЛА", Vector2(58, 39), Vector2(604, 44), 32, GOLD, true)
+	_label(settlement_screen, "ЦИТАДЕЛЬ ПЕПЛА", Vector2(58, 63), Vector2(604, 34), 27, GOLD, true)
 	_label(settlement_screen, "ОСКОЛКИ ПИТАЮТ ВАШЕ ВЛАДЕНИЕ", Vector2(58, 86), Vector2(604, 28), 15, MUTED, true)
 	for i in range(3):
 		var x := 24.0 + i * 229.0
@@ -218,20 +347,20 @@ func _build_settlement_screen() -> void:
 	settlement_grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	settlement_grid.size = CANVAS
 	settlement_screen.add_child(settlement_grid)
-	_texture(settlement_screen, "ui_panel", Vector2(24, 753), Vector2(672, 134))
-	slot_title = _label(settlement_screen, "", Vector2(64, 780), Vector2(588, 37), 24, GOLD)
-	slot_detail = _label(settlement_screen, "", Vector2(64, 821), Vector2(588, 48), 16, MUTED)
+	_texture(settlement_screen, "ui_panel", Vector2(24, 670), Vector2(672, 190))
+	slot_title = _label(settlement_screen, "", Vector2(64, 695), Vector2(588, 37), 24, GOLD)
+	slot_detail = _label(settlement_screen, "", Vector2(64, 735), Vector2(588, 107), 18, IVORY)
 	slot_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	for i in range(4):
 		var key: String = BUILDING_KEYS[i]
-		var button := _button(settlement_screen, "", Vector2(24 + 171 * i, 908), Vector2(159, 104), func(): _choose_kind(i), true)
+		var button := _button(settlement_screen, "", Vector2(24 + 171 * i, 864), Vector2(159, 120), func(): _choose_kind(i), true)
 		_texture(button, key, Vector2(43, 3), Vector2(74, 68))
-		_label(button, BUILDING_NAMES[i], Vector2(1, 71), Vector2(157, 25), 14, GOLD, true)
-	build_button = _button(settlement_screen, "Построить", Vector2(24, 1032), Vector2(326, 73), _build_selected)
-	upgrade_button = _button(settlement_screen, "Улучшить", Vector2(367, 1032), Vector2(329, 73), _upgrade_selected)
-	_button(settlement_screen, "Собрать ресурсы", Vector2(24, 1120), Vector2(326, 73), _mine)
-	_button(settlement_screen, "К кристаллам", Vector2(367, 1120), Vector2(329, 73), _close_settlement)
-	settlement_status = _label(settlement_screen, "", Vector2(32, 1201), Vector2(656, 50), 16, MUTED, true)
+		_label(button, BUILDING_NAMES[i], Vector2(1, 79), Vector2(157, 29), 16, GOLD, true)
+	build_button = _button(settlement_screen, "Построить", Vector2(24, 985), Vector2(326, 112), _build_selected)
+	upgrade_button = _button(settlement_screen, "Улучшить", Vector2(367, 985), Vector2(329, 112), _upgrade_selected)
+	_button(settlement_screen, "Собрать ресурсы", Vector2(24, 1097), Vector2(326, 112), _mine)
+	settlement_return_button = _button(settlement_screen, "Главная", Vector2(367, 1097), Vector2(329, 112), _close_settlement)
+	settlement_status = _label(settlement_screen, "", Vector2(32, 1211), Vector2(656, 50), 18, IVORY, true)
 	settlement_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
 
@@ -245,8 +374,8 @@ func _build_result_modal() -> void:
 	modal_title = _label(modal, "", Vector2(80, 451), Vector2(560, 56), 34, GOLD, true)
 	modal_body = _label(modal, "", Vector2(100, 523), Vector2(520, 203), 23, IVORY, true)
 	modal_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	modal_action = _button(modal, "", Vector2(130, 753), Vector2(460, 80), _result_continue)
-	modal_secondary = _button(modal, "В цитадель", Vector2(130, 851), Vector2(460, 80), _result_settlement)
+	modal_action = _button(modal, "", Vector2(130, 735), Vector2(460, 112), _result_continue)
+	modal_secondary = _button(modal, "В цитадель", Vector2(130, 853), Vector2(460, 112), _result_settlement)
 
 
 func _build_level_modal() -> void:
@@ -254,44 +383,153 @@ func _build_level_modal() -> void:
 	level_modal.visible = false
 	level_modal.mouse_filter = Control.MOUSE_FILTER_STOP
 	_texture(level_modal, "background", Vector2.ZERO, CANVAS).modulate = Color(0.2, 0.18, 0.23)
-	_texture(level_modal, "ui_result", Vector2(40, 310), Vector2(640, 650))
+	_texture(level_modal, "ui_result", Vector2(40, 280), Vector2(640, 778))
 	_label(level_modal, "ВРАТА ИСПЫТАНИЙ", Vector2(80, 375), Vector2(560, 50), 29, GOLD, true)
 	_label(level_modal, "Процедурные разломы разных форм", Vector2(70, 437), Vector2(580, 36), 17, MUTED, true)
 	level_choice_label = _number(level_modal, "1", Vector2(205, 505), Vector2(310, 91), true)
-	_button(level_modal, "−", Vector2(104, 513), Vector2(93, 76), func(): _change_level_choice(-1), true)
-	_button(level_modal, "+", Vector2(523, 513), Vector2(93, 76), func(): _change_level_choice(1), true)
-	_button(level_modal, "−100", Vector2(104, 615), Vector2(153, 60), func(): _change_level_choice(-100), true)
-	_button(level_modal, "+100", Vector2(284, 615), Vector2(153, 60), func(): _change_level_choice(100), true)
-	_button(level_modal, "+1000", Vector2(464, 615), Vector2(153, 60), func(): _change_level_choice(1000), true)
-	_button(level_modal, "Войти в разлом", Vector2(130, 720), Vector2(460, 80), _confirm_level_choice)
-	_button(level_modal, "Вернуться", Vector2(130, 820), Vector2(460, 66), func(): level_modal.visible = false, true)
+	_button(level_modal, "−", Vector2(84, 502), Vector2(112, 112), func(): _change_level_choice(-1), true)
+	_button(level_modal, "+", Vector2(524, 502), Vector2(112, 112), func(): _change_level_choice(1), true)
+	for i in range(4):
+		var jump: int = [-100, 10, 100, 1000][i]
+		var caption := "Босс" if jump == 10 else str(jump) if jump < 0 else "+" + str(jump)
+		var action := func():
+			if jump == 10:
+				_jump_to_boss()
+			else:
+				_change_level_choice(jump)
+		_button(level_modal, caption, Vector2(72 + 144 * i, 638), Vector2(138, 112), action, true)
+	_button(level_modal, "Войти в разлом", Vector2(130, 769), Vector2(460, 112), _confirm_level_choice)
+	_button(level_modal, "Вернуться", Vector2(130, 889), Vector2(460, 112), func(): level_modal.visible = false, true)
+
+
+func _build_utility_modal() -> void:
+	utility_modal = _new_screen()
+	utility_modal.visible = false
+	utility_modal.mouse_filter = Control.MOUSE_FILTER_STOP
+	_texture(utility_modal, "background", Vector2.ZERO, CANVAS).modulate = Color(0.18, 0.18, 0.22)
+	_texture(utility_modal, "ui_result", Vector2(40, 265), Vector2(640, 796))
+	utility_title = _label(utility_modal, "", Vector2(86, 387), Vector2(548, 57), 29, GOLD, true)
+	utility_body = _label(utility_modal, "", Vector2(88, 465), Vector2(544, 370), 22, IVORY)
+	utility_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	reduced_button = _button(utility_modal, "", Vector2(112, 551), Vector2(496, 112), func(): _toggle_setting("reduced_effects"))
+	haptics_button = _button(utility_modal, "", Vector2(112, 683), Vector2(496, 112), func(): _toggle_setting("haptics"))
+	_button(utility_modal, "Вернуться", Vector2(130, 873), Vector2(460, 112), _close_utility)
+
+
+func _open_settings() -> void:
+	_reset_pointer()
+	_clear_hint()
+	utility_mode = "settings"
+	utility_title.text = "НАСТРОЙКИ"
+	utility_body.text = "Для слабого телефона включите экономные эффекты."
+	utility_body.size.y = 78
+	reduced_button.visible = true
+	haptics_button.visible = true
+	_refresh_settings()
+	utility_modal.visible = true
+
+
+func _refresh_settings() -> void:
+	_set_button_text(reduced_button, "Эффекты: экономные" if bool(store.data.settings.reduced_effects) else "Эффекты: полные")
+	_set_button_text(haptics_button, "Вибрация: включена" if bool(store.data.settings.haptics) else "Вибрация: выключена")
+	fx_pool.configure(bool(store.data.settings.reduced_effects))
+
+
+func _toggle_setting(key: String) -> void:
+	if not store.update_setting(key, not bool(store.data.settings[key])):
+		utility_body.text = store.last_error
+	else:
+		utility_body.text = "Настройка сохранена."
+	_refresh_settings()
+
+
+func _close_utility() -> void:
+	utility_modal.visible = false
+	_reset_pointer()
+
+
+func _open_help() -> void:
+	_reset_pointer()
+	_clear_hint()
+	utility_mode = "help"
+	utility_title.text = "ПРАВИЛА РАЗЛОМА"
+	reduced_button.visible = false
+	haptics_button.visible = false
+	utility_body.size.y = 370
+	var state: Dictionary = engine.objective_state()
+	var rules := {
+		"score": "Наберите нужное число очков за оставшиеся ходы.",
+		"collect": "Собирайте кристаллы «%s»: засчитывается только этот цвет." % GEM_NAMES[int(state.get("color", 0))],
+		"seals": "Разрушьте все печати. Совпадения рядом с печатью снимают прочность; молнии и взрывы тоже помогают.",
+		"altars": "Зажгите все алтари: соберите совпадение на отмеченной клетке.",
+		"boss": "Победите хранителя. Его слабость: %s. Каждые три хода он накладывает новые ледяные печати." % GEM_NAMES[int(state.get("color", 0))],
+	}
+	utility_body.text = String(rules.get(state.get("kind", "score"), rules.score)) + "\n\n3 в ряд — совпадение.\n4 — молния по линии.\nТ или L — взрыв вокруг бомбы.\n5 — звезда очищает цвет.\n\nМеняйте соседние кристаллы свайпом или двумя касаниями."
+	utility_modal.visible = true
+
+
+func _reset_pointer() -> void:
+	pointer_down = false
+	pointer_touch_id = -1
+
+
+func _clear_hint() -> void:
+	hint_serial += 1
+	hint_searching = false
+	if hint_tween != null and hint_tween.is_valid():
+		hint_tween.kill()
+	hint_tween = null
+	if is_instance_valid(selection_ring):
+		selection_ring.modulate = Color.WHITE
+
+
+func _vibrate(duration: int) -> void:
+	if bool(store.data.settings.haptics):
+		Input.vibrate_handheld(duration)
 
 
 func _load_level(number: int) -> void:
 	_cancel_animations()
+	home_after_turn = false
 	active_level = clampi(number, 1, ProgressStore.MAX_LEVEL)
 	engine = MatchEngine.new()
-	engine.initialize(active_level)
+	entry_bonuses = settlement.battle_bonuses()
+	engine.initialize(active_level, entry_bonuses)
 	selected = Vector2i(-1, -1)
 	reward_banked = false
 	last_rewards.clear()
 	modal.visible = false
 	level_modal.visible = false
+	utility_modal.visible = false
 	selection_ring.visible = false
 	busy = false
 	var width := int(engine.level_data.get("width", 8))
 	var height := int(engine.level_data.get("height", 8))
-	tile_size = minf(minf(628.0 / width, 620.0 / height), 80.0)
+	tile_size = minf(minf(620.0 / width, 564.0 / height), 78.0)
 	board_size = Vector2(width, height) * tile_size
-	board_origin = Vector2((720.0 - board_size.x) / 2.0, 352.0 + (630.0 - board_size.y) / 2.0)
-	_clear_children(cells_layer)
+	board_origin = Vector2((720.0 - board_size.x) / 2.0, 428.0 + (568.0 - board_size.y) / 2.0)
+	for cell: Vector2i in cell_nodes:
+		cell_nodes[cell].visible = engine.cells.has(cell)
+		cell_nodes[cell].position = _cell_origin(cell)
+		cell_nodes[cell].size = Vector2.ONE * tile_size
+	tile_nodes.clear()
+	var index := 0
+	for gem in gem_pool:
+		gem.visible = false
 	for cell: Vector2i in engine.cells:
-		_texture(cells_layer, "cell", _cell_origin(cell), Vector2.ONE * tile_size)
-	_render_board(engine.cells, engine.blockers)
+		tile_nodes[cell] = gem_pool[index]
+		index += 1
+	tile_snapshot.clear()
+	_render_board(engine.cells, engine.blockers, false, engine.altars)
 	_update_hud()
-	status_label.text = "Три — совпадение · четыре — молния · пять — звезда"
+	status_label.text = "Проведите по кристаллу для обмена."
+	var bonuses := entry_bonuses
+	if int(bonuses.bonus_moves) > 0 or int(bonuses.starting_specials) > 0:
+		status_label.text = "Цитадель: +%d ходов, %d бонусов." % [int(bonuses.bonus_moves), int(bonuses.starting_specials)]
 	var shape := String(engine.level_data.get("shape", "Разлом"))
-	shape_label.text = "%s · ритуал %d" % [_shape_name(shape), active_level]
+	shape_label.text = _shape_name(shape)
+	level_label.text = "%s · разлом" % String(engine.level_data.get("region", "Проклятый лес"))
+	game_background.texture = Art.texture("forest_background")
 	level_number.text = str(active_level)
 
 
@@ -314,41 +552,22 @@ func _cell_center(cell: Vector2i) -> Vector2:
 	return _cell_origin(cell) + Vector2.ONE * tile_size * 0.5
 
 
-func _render_board(board: Dictionary, blockers: Dictionary, falling: bool = false) -> void:
+func _render_board(board: Dictionary, blockers: Dictionary, falling: bool = false, altars: Dictionary = {}) -> void:
 	var old_snapshot := tile_snapshot.duplicate(true)
 	var available: Array = old_snapshot.keys()
 	available.sort_custom(func(a: Vector2i, b: Vector2i): return a.y > b.y)
-	_clear_children(gems_layer)
-	tile_nodes.clear()
 	tile_snapshot = board.duplicate(true)
 	var order: Array = board.keys()
 	order.sort_custom(func(a: Vector2i, b: Vector2i): return a.y > b.y)
 	for cell: Vector2i in order:
 		var data: Dictionary = board[cell]
-		var node := Control.new()
-		node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var node: GemView = tile_nodes[cell]
+		var altar = altars.get(cell, null)
+		node.configure(data, blockers.get(cell, null), tile_size, null)
+		if altar != null:
+			node.gem_sprite.position = Vector2.ONE * tile_size * 0.125
+			node.gem_sprite.size = Vector2.ONE * tile_size * 0.75
 		node.position = _cell_origin(cell)
-		node.size = Vector2.ONE * tile_size
-		node.pivot_offset = node.size * 0.5
-		gems_layer.add_child(node)
-		_texture(node, "gem_%d" % int(data.get("color", 0)), Vector2.ONE * tile_size * 0.07, Vector2.ONE * tile_size * 0.86)
-		var special := String(data.get("special", ""))
-		if not special.is_empty():
-			_texture(node, "special_" + special, Vector2.ONE * tile_size * 0.025, Vector2.ONE * tile_size * 0.95)
-		if blockers.has(cell):
-			var blocker = blockers[cell]
-			var kind := "ice"
-			var hp := 1
-			if blocker is Dictionary:
-				kind = String(blocker.get("kind", blocker.get("type", "ice")))
-				hp = int(blocker.get("hp", 1))
-			else:
-				hp = int(blocker)
-				kind = "stone" if hp > 1 else "ice"
-			_texture(node, "blocker_" + kind, Vector2.ONE * tile_size * 0.025, Vector2.ONE * tile_size * 0.95)
-			if hp > 1:
-				_label(node, str(hp), Vector2(tile_size * 0.63, tile_size * 0.66), Vector2.ONE * tile_size * 0.27, maxi(12, int(tile_size * 0.23)), IVORY, true)
-		tile_nodes[cell] = node
 		if falling:
 			var segment_top := cell.y
 			while board.has(Vector2i(cell.x, segment_top - 1)) and not blockers.has(Vector2i(cell.x, segment_top - 1)):
@@ -362,7 +581,14 @@ func _render_board(board: Dictionary, blockers: Dictionary, falling: bool = fals
 			if source != cell:
 				node.position = _cell_origin(source)
 				var tween := _tween()
-				tween.tween_property(node, "position", _cell_origin(cell), 0.24 + (cell.y - source.y) * 0.021).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+				tween.tween_property(node, "position", _cell_origin(cell), 0.18 + (cell.y - source.y) * 0.02).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+	for cell: Vector2i in altar_nodes:
+		var fixed_altar: TextureRect = altar_nodes[cell]
+		fixed_altar.visible = altars.has(cell)
+		if fixed_altar.visible:
+			fixed_altar.position = _cell_origin(cell) + Vector2.ONE * tile_size * 0.025
+			fixed_altar.size = Vector2.ONE * tile_size * 0.95
+			fixed_altar.texture = Art.texture("altar_lit" if bool(altars[cell]) else "altar")
 
 
 func _same_gravity_segment(a: Vector2i, b: Vector2i, board: Dictionary, blockers: Dictionary) -> bool:
@@ -375,17 +601,43 @@ func _same_gravity_segment(a: Vector2i, b: Vector2i, board: Dictionary, blockers
 	return true
 
 
-func _update_hud() -> void:
+func _update_hud(state: Dictionary = {}) -> void:
+	if state.is_empty():
+		state = engine.objective_state()
 	score_label.text = str(engine.score)
-	var target := int(engine.level_data.get("target", 1000))
-	target_number.text = str(target)
 	moves_label.text = str(engine.moves)
-	progress_fill.size.x = 390.0 * clampf(float(engine.score) / maxi(1, target), 0.0, 1.0)
 	moves_label.modulate = Color("ed998b") if engine.moves <= 5 else Color.WHITE
+	var kind := String(state.get("kind", "score"))
+	var current := int(state.get("current", 0))
+	var target := int(state.get("target", 1))
+	var titles := {"score": "Наберите очки", "collect": "Соберите: %s" % GEM_NAMES[int(state.get("color", 0))], "seals": "Разрушьте печати", "altars": "Зажгите алтари", "boss": "Здоровье хранителя"}
+	mission_description.text = String(titles.get(kind, titles.score))
+	var icon_key := "gem_%d" % int(state.get("color", 0))
+	if kind == "score":
+		icon_key = "coin"
+	elif kind == "seals":
+		icon_key = "blocker_ice"
+	elif kind == "altars":
+		icon_key = "altar_lit"
+	elif kind == "boss":
+		icon_key = "boss_portrait"
+		current = int(state.get("boss_hp", 0))
+		target = int(state.get("boss_max_hp", 1))
+	mission_icon.texture = Art.texture(icon_key)
+	objective_number.text = str(current)
+	target_number.text = str(target)
+	var progress := float(current) / maxi(1, target)
+	if kind == "boss":
+		progress = 1.0 - progress
+	progress_fill.size.x = 379.0 * clampf(progress, 0.0, 1.0)
+	if kind == "boss":
+		boss_timer_label.text = "Слабость: %s · атака через %d ход(а)" % [GEM_NAMES[int(state.get("color", 0))], int(state.get("attack_in", 3))]
+	else:
+		boss_timer_label.text = "3 — совпадение · 4 — молния · Т/L — бомба · 5 — звезда"
 
 
 func _input(event: InputEvent) -> void:
-	if busy or current_screen != "game" or modal.visible or level_modal.visible:
+	if busy or current_screen != "game" or modal.visible or level_modal.visible or utility_modal.visible:
 		return
 	var position_value := Vector2.ZERO
 	var pressed := false
@@ -434,6 +686,7 @@ func _point_to_cell(point: Vector2) -> Vector2i:
 
 
 func _select_tile(cell: Vector2i) -> void:
+	_clear_hint()
 	if not engine.cells.has(cell):
 		return
 	if engine.cells.has(selected) and abs(cell.x - selected.x) + abs(cell.y - selected.y) == 1:
@@ -454,15 +707,14 @@ func _tween() -> Tween:
 
 
 func _cancel_animations() -> void:
+	_clear_hint()
 	turn_generation += 1
 	for tween in running_tweens:
 		if tween.is_valid():
 			tween.kill()
 	running_tweens.clear()
-	if is_instance_valid(effects_layer):
-		for child in effects_layer.get_children():
-			if child != selection_ring:
-				child.queue_free()
+	if is_instance_valid(fx_pool):
+		fx_pool.clear()
 	pointer_down = false
 	pointer_touch_id = -1
 
@@ -471,6 +723,7 @@ func _attempt_swap(a: Vector2i, b: Vector2i) -> void:
 	if busy or not engine.cells.has(a) or not engine.cells.has(b):
 		return
 	busy = true
+	_clear_hint()
 	selected = Vector2i(-1, -1)
 	selection_ring.visible = false
 	var generation := turn_generation
@@ -500,8 +753,10 @@ func _attempt_swap(a: Vector2i, b: Vector2i) -> void:
 	if not bool(result.get("valid", false)):
 		status_label.text = "Этот обмен не создаёт совпадение. Попробуйте другой."
 		busy = false
+		if home_after_turn:
+			_show_home()
 		return
-	Input.vibrate_handheld(25)
+	_vibrate(25)
 	for step: Dictionary in result.get("steps", []):
 		if generation != turn_generation:
 			return
@@ -509,20 +764,31 @@ func _attempt_swap(a: Vector2i, b: Vector2i) -> void:
 		await get_tree().create_timer(0.31).timeout
 		if generation != turn_generation:
 			return
-		_render_board(step.get("board", engine.cells), step.get("blockers", engine.blockers), true)
+		_render_board(step.get("board", engine.cells), step.get("blockers", engine.blockers), true, step.get("altars", engine.altars))
+		_update_hud(step.get("objective", {}))
 		score_label.text = str(step.get("score", engine.score))
 		var combo := int(step.get("combo", 1))
-		status_label.text = "КАСКАД ×%d · сила разлома растёт" % combo if combo > 1 else "Осколки наполняют цитадель силой"
+		if not step.get("boss_attack", []).is_empty():
+			status_label.text = "Хранитель наложил ледяные печати!"
+		elif int(step.get("boss_damage", 0)) > 0:
+			status_label.text = "Хранитель: −%d здоровья" % int(step.boss_damage)
+		else:
+			status_label.text = "Каскад ×%d" % combo if combo > 1 else "Совпадение!"
 		await get_tree().create_timer(0.47).timeout
 	if generation != turn_generation:
 		return
-	_render_board(engine.cells, engine.blockers)
+	_render_board(engine.cells, engine.blockers, false, engine.altars)
 	_update_hud()
 	busy = false
 	if bool(result.get("won", false)) or bool(result.get("lost", false)):
 		_show_result(bool(result.get("won", false)))
 	elif engine.legal_moves().is_empty():
 		status_label.text = "Разлом изменился — ищите новое сочетание."
+	if home_after_turn:
+		if modal.visible and store.last_award_status == "save_failed":
+			home_after_turn = false
+		else:
+			_show_home()
 
 
 func _animate_step(step: Dictionary) -> void:
@@ -535,12 +801,16 @@ func _animate_step(step: Dictionary) -> void:
 			_spawn_fx("fx_lightning", Vector2(_cell_center(position_value).x, board_origin.y + board_size.y / 2), Vector2(board_size.y + 80, tile_size * 1.3), PI * 0.5)
 		else:
 			_spawn_fx("fx_explosion", _cell_center(position_value), Vector2.ONE * tile_size * (4.4 if special == "nova" else 3.0))
-		Input.vibrate_handheld(45)
+		_vibrate(45)
 	for hit in step.get("blocker_hits", []):
 		var position_value: Vector2i = hit if hit is Vector2i else hit.get("position", Vector2i.ZERO)
 		_spawn_fx("fx_frost", _cell_center(position_value), Vector2.ONE * tile_size * 1.8)
+	var index := 0
+	var frequency := 6 if bool(store.data.settings.reduced_effects) else 3
 	for position_value: Vector2i in step.get("removed", []):
-		_spawn_fx("fx_dust", _cell_center(position_value), Vector2.ONE * tile_size * 1.6, randf_range(-0.5, 0.5))
+		if index % frequency == 0:
+			_spawn_fx("fx_dust", _cell_center(position_value), Vector2.ONE * tile_size * 1.6, randf_range(-0.5, 0.5))
+		index += 1
 		if tile_nodes.has(position_value):
 			var node: Control = tile_nodes[position_value]
 			var tween := _tween().set_parallel()
@@ -549,51 +819,61 @@ func _animate_step(step: Dictionary) -> void:
 			tile_snapshot.erase(position_value)
 	for special in step.get("spawned", []):
 		_spawn_fx("fx_frost", _cell_center(special.get("position", Vector2i.ZERO)), Vector2.ONE * tile_size * 1.7)
+	for attack: Vector2i in step.get("boss_attack", []):
+		_spawn_fx("fx_frost", _cell_center(attack), Vector2.ONE * tile_size * 1.8)
 
 
 func _spawn_fx(prefix: String, center: Vector2, dimensions: Vector2, angle: float = 0.0) -> void:
-	var node := _texture(effects_layer, prefix + "_0", center - dimensions * 0.5, dimensions)
-	node.pivot_offset = dimensions * 0.5
-	node.rotation = angle
-	node.scale = Vector2.ONE * 0.75
-	var tween := _tween().set_parallel()
-	tween.tween_property(node, "scale", Vector2.ONE * 1.18, 0.38).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tween.tween_property(node, "modulate:a", 0.0, 0.20).set_delay(0.18)
-	_animate_fx_frames(node, prefix, turn_generation)
-
-
-func _animate_fx_frames(node: TextureRect, prefix: String, generation: int) -> void:
-	for frame in range(4):
-		if not is_instance_valid(node) or generation != turn_generation:
-			return
-		node.texture = Art.texture(prefix + "_%d" % frame)
-		await get_tree().create_timer(0.095).timeout
-	if is_instance_valid(node):
-		node.queue_free()
+	fx_pool.play(prefix, center, dimensions, angle)
 
 
 func _show_hint() -> void:
-	if busy:
+	if busy or hint_searching:
 		return
+	_clear_hint()
+	var serial := hint_serial
+	hint_searching = true
 	var moves: Array = engine.legal_moves()
 	if moves.is_empty():
+		hint_searching = false
 		status_label.text = "Нет ходов. Начните ритуал заново."
 		return
-	var move = moves[0]
-	var a: Vector2i
-	var b: Vector2i
-	if move is Dictionary:
-		a = move.get("a", move.get("from", Vector2i.ZERO))
-		b = move.get("b", move.get("to", Vector2i.RIGHT))
-	else:
-		a = move[0]
-		b = move[1]
+	status_label.text = "Ищу ход для цели разлома…"
+	var state: Dictionary = engine.objective_state()
+	var weak := int(state.get("color", 0))
+	if String(state.kind) in ["collect", "boss"]:
+		moves.sort_custom(func(first, second):
+			var left := int(engine.cells[first[0]].color == weak) + int(engine.cells[first[1]].color == weak)
+			var right := int(engine.cells[second[0]].color == weak) + int(engine.cells[second[1]].color == weak)
+			return left > right)
+	var best_move = moves[0]
+	var best_metric := -INF
+	# A bounded one-turn lookahead yields each frame; cancellation never mutates play.
+	for index in range(mini(12, moves.size())):
+		if serial != hint_serial or busy or current_screen != "game":
+			return
+		var simulation := engine.clone_model()
+		var result: Dictionary = simulation.try_swap(moves[index][0], moves[index][1])
+		var after: Dictionary = simulation.objective_state()
+		var metric: float = float(int(after.current) - int(state.current)) * 10000.0 + simulation.score - engine.score
+		metric -= maxi(0, simulation.blockers.size() - engine.blockers.size()) * 300.0
+		if bool(result.get("won", false)):
+			metric += 1000000.0
+		if metric > best_metric:
+			best_metric = metric
+			best_move = moves[index]
+		await get_tree().process_frame
+	if serial != hint_serial or busy:
+		return
+	hint_searching = false
+	var a: Vector2i = best_move[0]
+	var b: Vector2i = best_move[1]
 	_select_tile(a)
 	var direction := "вправо" if b.x > a.x else "влево" if b.x < a.x else "вниз" if b.y > a.y else "вверх"
-	status_label.text = "Подсказка: сдвиньте выделенный кристалл %s." % direction
-	var tween := _tween().set_loops(3)
-	tween.tween_property(selection_ring, "modulate:a", 0.4, 0.30)
-	tween.tween_property(selection_ring, "modulate:a", 1.0, 0.30)
+	status_label.text = "Для цели: сдвиньте выделенный кристалл %s." % direction
+	hint_tween = _tween().set_loops(3)
+	hint_tween.tween_property(selection_ring, "modulate:a", 0.4, 0.30)
+	hint_tween.tween_property(selection_ring, "modulate:a", 1.0, 0.30)
 
 
 func _retry() -> void:
@@ -605,7 +885,7 @@ func _retry() -> void:
 func _show_result(won: bool) -> void:
 	end_won = won
 	if not reward_banked:
-		last_rewards = store.award_level(active_level, engine.score, won, engine.collected)
+		last_rewards = store.award_level(active_level, engine.score, won, engine.collected, entry_bonuses)
 		reward_banked = store.last_award_status != "save_failed"
 	var save_failed := store.last_award_status == "save_failed"
 	modal_title.text = "ХРОНИКА НЕ ЗАПИСАНА" if save_failed else "РИТУАЛ ЗАВЕРШЁН" if won else "СИЛА ИССЯКЛА"
@@ -659,6 +939,8 @@ func _result_settlement() -> void:
 func _open_level_picker() -> void:
 	if busy:
 		return
+	_clear_hint()
+	_reset_pointer()
 	choosing_level = active_level
 	level_choice_label.text = str(choosing_level)
 	level_modal.visible = true
@@ -669,6 +951,11 @@ func _change_level_choice(delta: int) -> void:
 	level_choice_label.text = str(choosing_level)
 
 
+func _jump_to_boss() -> void:
+	choosing_level = mini(ProgressStore.MAX_LEVEL, (choosing_level / 10 as int) * 10 + 10)
+	level_choice_label.text = str(choosing_level)
+
+
 func _confirm_level_choice() -> void:
 	_load_level(choosing_level)
 
@@ -676,16 +963,24 @@ func _confirm_level_choice() -> void:
 func _open_settlement() -> void:
 	if busy:
 		return
+	_clear_hint()
+	_reset_pointer()
+	selected = Vector2i(-1, -1)
+	selection_ring.visible = false
+	settlement_origin = current_screen
 	current_screen = "settlement"
+	home_screen.visible = false
 	game_screen.visible = false
 	settlement_screen.visible = true
+	_set_button_text(settlement_return_button, "Главная" if settlement_origin == "home" else "К кристаллам")
 	_update_settlement()
 
 
 func _close_settlement() -> void:
-	current_screen = "game"
-	settlement_screen.visible = false
-	game_screen.visible = true
+	if settlement_origin == "home":
+		_show_home()
+	else:
+		_continue_from_home()
 
 
 func _update_settlement() -> void:
@@ -699,7 +994,7 @@ func _update_settlement() -> void:
 	for slot in range(9):
 		var row := slot / 3
 		var column := slot % 3
-		var center := Vector2(360 + (column - row) * 99, 367 + (column + row) * 73)
+		var center := Vector2(360 + (column - row) * 99, 345 + (column + row) * 65)
 		var ground := TextureButton.new()
 		ground.texture_normal = Art.texture("ground")
 		ground.texture_pressed = ground.texture_normal
@@ -738,12 +1033,18 @@ func _update_settlement() -> void:
 	upgrade_button.modulate = Color(0.5, 0.5, 0.5) if upgrade_button.disabled else Color.WHITE
 	if selected_building < 0:
 		slot_title.text = "Участок %d · %s" % [selected_slot + 1, BUILDING_NAMES[selected_kind]]
-		slot_detail.text = "Строительство: %s\nПостройки добывают ресурсы между сражениями." % _cost_text(settlement.get_build_cost(selected_kind))
+		var future_bonuses := ["+1 ход в каждом разломе.", "+1 ход и +5% к наградам.", "Спецкристалл в начале; +1 эссенция за победу.", "+1 урон боссу; +10% к наградам."]
+		slot_detail.text = "Цена: %s\n%s\nТакже добывает ресурсы для строительства." % [_cost_text(settlement.get_build_cost(selected_kind)), future_bonuses[selected_kind]]
 	else:
 		var tier := int(upgrades[selected_slot]) if selected_slot < upgrades.size() else 0
 		slot_title.text = "%s · уровень %d" % [BUILDING_NAMES[selected_building], tier + 1]
 		var upgrade_text := "Максимальный уровень" if tier >= SettlementModel.MAX_UPGRADE else "Улучшение: %s" % _cost_text(settlement.get_upgrade_cost(selected_slot))
-		slot_detail.text = "%s\nЗа минуту: %s" % [upgrade_text, _cost_text(settlement.production())]
+		var battle_effect := ""
+		for description in settlement.bonus_descriptions():
+			if description.begins_with(BUILDING_NAMES[selected_building] + ":"):
+				battle_effect = description
+				break
+		slot_detail.text = "%s\n%s\nЗа минуту: %s" % [upgrade_text, battle_effect, _cost_text(settlement.production())]
 	if settlement_status.text.is_empty():
 		settlement_status.text = "Побеждайте в разломах, стройте и собирайте добычу."
 
@@ -791,13 +1092,13 @@ func _operation_ok(result) -> bool:
 
 func _build_selected() -> void:
 	var result = settlement.build(selected_slot, selected_kind)
-	settlement_status.text = "%s возведена. Сила владения растёт." % BUILDING_NAMES[selected_kind] if _operation_ok(result) else _operation_error(result)
+	settlement_status.text = "%s: бонусы со следующей попытки." % BUILDING_NAMES[selected_kind] if _operation_ok(result) else _operation_error(result)
 	_update_settlement()
 
 
 func _upgrade_selected() -> void:
 	var result = settlement.upgrade(selected_slot)
-	settlement_status.text = "Постройка улучшена. Добыча увеличилась." if _operation_ok(result) else _operation_error(result)
+	settlement_status.text = "Постройка улучшена. Бонусы со следующей попытки." if _operation_ok(result) else _operation_error(result)
 	_update_settlement()
 
 
@@ -824,15 +1125,25 @@ func _mine() -> void:
 
 
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_PAUSED:
+		_reset_pointer()
+		_clear_hint()
+		return
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
-		if is_instance_valid(modal) and modal.visible:
-			if store.last_award_status == "save_failed":
-				return
-			modal.visible = false
+		if is_instance_valid(utility_modal) and utility_modal.visible:
+			_close_utility()
 		elif is_instance_valid(level_modal) and level_modal.visible:
 			level_modal.visible = false
+		elif is_instance_valid(modal) and modal.visible:
+			if store.last_award_status == "save_failed":
+				return
+			_result_continue()
 		elif current_screen == "settlement":
 			_close_settlement()
+		elif current_screen == "game":
+			_show_home()
+		elif current_screen == "home":
+			get_tree().quit()
 
 
 func _smoke() -> void:
@@ -840,6 +1151,9 @@ func _smoke() -> void:
 	await get_tree().process_frame
 	var preview_dir := ProjectSettings.globalize_path("res://art/preview")
 	DirAccess.make_dir_recursive_absolute(preview_dir)
+	if not await _smoke_home_navigation(preview_dir):
+		get_tree().quit(1)
+		return
 	await _capture_preview(preview_dir.path_join("gameplay.png"))
 	var legal: Array = engine.legal_moves()
 	if not legal.is_empty():
@@ -910,6 +1224,9 @@ func _smoke() -> void:
 	_load_level(1000)
 	print("UI_SMOKE_LEVEL_1000_OK cells=", engine.cells.size(), " shape=", engine.level_data.get("shape", ""))
 	await _capture_preview(preview_dir.path_join("level1000.png"))
+	if not await _smoke_objectives_and_pools(preview_dir):
+		get_tree().quit(1)
+		return
 	print("UI_SMOKE_OK")
 	get_tree().quit()
 
@@ -920,6 +1237,60 @@ func _capture_preview(path: String) -> void:
 		return
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png(path)
+
+
+func _smoke_press_control(control: Control) -> void:
+	var canvas_point := control.global_position + control.size * 0.5
+	var point := get_viewport().get_final_transform() * get_global_transform_with_canvas() * canvas_point
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = point
+		event.global_position = point
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		Input.parse_input_event(event)
+		await get_tree().process_frame
+
+
+func _smoke_home_navigation(preview_dir: String) -> bool:
+	if current_screen != "home" or not home_screen.visible or game_screen.visible or home_level_number.text != str(store.data.level):
+		push_error("UI_SMOKE_HOME_STARTUP_FAILED")
+		return false
+	var board := engine.snapshot()
+	var moves := engine.moves
+	var bonuses := entry_bonuses.duplicate(true)
+	await _capture_preview(preview_dir.path_join("home.png"))
+	_open_settings()
+	if current_screen != "home" or not utility_modal.visible:
+		push_error("UI_SMOKE_HOME_SETTINGS_OPEN_FAILED")
+		return false
+	_notification(NOTIFICATION_WM_GO_BACK_REQUEST)
+	if utility_modal.visible or current_screen != "home" or not home_screen.visible:
+		push_error("UI_SMOKE_HOME_SETTINGS_BACK_FAILED")
+		return false
+	_open_help()
+	_notification(NOTIFICATION_WM_GO_BACK_REQUEST)
+	_open_settlement()
+	if current_screen != "settlement" or settlement_origin != "home":
+		push_error("UI_SMOKE_HOME_SETTLEMENT_OPEN_FAILED")
+		return false
+	_notification(NOTIFICATION_WM_GO_BACK_REQUEST)
+	if current_screen != "home":
+		push_error("UI_SMOKE_HOME_SETTLEMENT_BACK_FAILED")
+		return false
+	await _smoke_press_control(home_continue)
+	if current_screen != "game" or not game_screen.visible or home_screen.visible:
+		push_error("UI_SMOKE_HOME_CONTINUE_TOUCH_FAILED")
+		return false
+	_open_settlement()
+	_close_settlement()
+	_notification(NOTIFICATION_WM_GO_BACK_REQUEST)
+	if current_screen != "home" or engine.snapshot() != board or engine.moves != moves or entry_bonuses != bonuses:
+		push_error("UI_SMOKE_HOME_PRESERVED_BATTLE_FAILED")
+		return false
+	_continue_from_home()
+	print("UI_SMOKE_HOME_OK startup=true continue_touch=true settings_back=true settlement_back=true battle_preserved=true")
+	return true
 
 
 func _smoke_tap(cell: Vector2i) -> void:
@@ -980,4 +1351,128 @@ func _smoke_save_failure() -> bool:
 		push_error("UI_SMOKE_SAVE_RETRY_FAILED")
 		return false
 	print("UI_SMOKE_SAVE_FAILURE_RETRY_OK")
+	return true
+
+
+func _smoke_objectives_and_pools(preview_dir: String) -> bool:
+	var gem_ids: Array[int] = []
+	for gem in gem_pool:
+		gem_ids.append(gem.get_instance_id())
+	var effects_created := int(fx_pool.stats().created)
+	_open_settings()
+	_toggle_setting("reduced_effects")
+	_toggle_setting("haptics")
+	var reloaded := ProgressStore.new()
+	reloaded.path = store.path
+	if not reloaded.load_progress() or not bool(reloaded.data.settings.reduced_effects) or bool(reloaded.data.settings.haptics):
+		push_error("UI_SMOKE_SETTINGS_PERSIST_FAILED")
+		return false
+	for index in range(64):
+		_spawn_fx("fx_dust", Vector2(350, 700), Vector2(70, 70))
+	if int(fx_pool.stats().active) > 8 or int(fx_pool.stats().created) != effects_created:
+		push_error("UI_SMOKE_REDUCED_FX_CAP_FAILED")
+		return false
+	fx_pool.clear()
+	await _capture_preview(preview_dir.path_join("settings.png"))
+	_toggle_setting("reduced_effects")
+	_close_utility()
+	for number in [2, 3, 4, 10]:
+		_load_level(number)
+		var kind: String = engine.objective_state().kind
+		await _capture_preview(preview_dir.path_join("mission_%s.png" % kind))
+		var turns := 3 if number == 10 else 1
+		var static_altar_positions: Dictionary = {}
+		for cell: Vector2i in engine.altars:
+			static_altar_positions[cell] = altar_nodes[cell].global_position
+		for index in range(turns):
+			var legal: Array = engine.legal_moves()
+			if legal.is_empty() or engine.is_won() or engine.is_lost():
+				break
+			var move = legal[0]
+			var before := engine.moves
+			await _smoke_swipe(move[0], move[1])
+			var deadline := Time.get_ticks_msec() + 10000
+			while busy and Time.get_ticks_msec() < deadline:
+				for cell: Vector2i in static_altar_positions:
+					if altar_nodes[cell].global_position != static_altar_positions[cell] or altar_nodes[cell].scale != Vector2.ONE or altar_nodes[cell].modulate.a != 1.0:
+						push_error("UI_SMOKE_ALTAR_MOVED_WITH_GEM")
+						return false
+				await get_tree().process_frame
+			if busy or engine.moves != before - 1:
+				push_error("UI_SMOKE_OBJECTIVE_INPUT_FAILED: " + kind)
+				return false
+		if number == 10:
+			await _capture_preview(preview_dir.path_join("boss.png"))
+		_open_help()
+		await _capture_preview(preview_dir.path_join("help_%s.png" % kind))
+		_close_utility()
+		for index in range(gem_pool.size()):
+			if gem_pool[index].get_instance_id() != gem_ids[index]:
+				push_error("UI_SMOKE_GEM_POOL_ID_CHANGED")
+				return false
+		print("UI_SMOKE_OBJECTIVE_OK kind=", kind, " progress=", engine.objective_state().current, "/", engine.objective_state().target)
+	var original_board := engine.snapshot()
+	var original_score := engine.score
+	var original_moves := engine.moves
+	await _show_hint()
+	if not engine.cells.has(selected) or engine.snapshot() != original_board or engine.score != original_score or engine.moves != original_moves:
+		push_error("UI_SMOKE_HINT_MUTATED_PLAY")
+		return false
+	_clear_hint()
+	_show_hint()
+	_open_help()
+	await get_tree().process_frame
+	_close_utility()
+	if hint_searching:
+		push_error("UI_SMOKE_HINT_CANCEL_FAILED")
+		return false
+	_smoke_clear_selection()
+	if not await _smoke_pause_and_back():
+		return false
+	if int(fx_pool.stats().created) != effects_created or effects_created != 24 or gem_pool.size() != 81:
+		push_error("UI_SMOKE_POOL_ALLOCATIONS_CHANGED")
+		return false
+	print("UI_SMOKE_POOLS_OK gems=81 fx=24 reduced_limit=8 settings_persisted=true")
+	return true
+
+
+func _smoke_clear_selection() -> void:
+	selected = Vector2i(-1, -1)
+	selection_ring.visible = false
+
+
+func _smoke_pause_and_back() -> bool:
+	_load_level(1)
+	var move = engine.legal_moves()[0]
+	var before_moves := engine.moves
+	await _smoke_swipe(move[0], move[1])
+	_notification(NOTIFICATION_APPLICATION_PAUSED)
+	_notification(NOTIFICATION_WM_GO_BACK_REQUEST)
+	var deadline := Time.get_ticks_msec() + 10000
+	while busy and Time.get_ticks_msec() < deadline:
+		await get_tree().process_frame
+	if busy or engine.moves != before_moves - 1 or pointer_down or current_screen != "home":
+		push_error("UI_SMOKE_PAUSE_TURN_FAILED")
+		return false
+	var completed_board := engine.snapshot()
+	_continue_from_home()
+	if engine.snapshot() != completed_board or current_screen != "game":
+		push_error("UI_SMOKE_TURN_HOME_RESUME_FAILED")
+		return false
+	_show_result(false)
+	_notification(NOTIFICATION_WM_GO_BACK_REQUEST)
+	if modal.visible or busy or engine.is_lost() or engine.is_won():
+		push_error("UI_SMOKE_TERMINAL_BACK_FAILED")
+		return false
+	_notification(NOTIFICATION_WM_GO_BACK_REQUEST)
+	if current_screen != "home" or utility_modal.visible or not home_screen.visible:
+		push_error("UI_SMOKE_GAME_BACK_HOME_FAILED")
+		return false
+	_open_settings()
+	_close_utility()
+	if current_screen != "home":
+		push_error("UI_SMOKE_HOME_SETTINGS_CHANGED_SCREEN")
+		return false
+	_continue_from_home()
+	print("UI_SMOKE_ALTARS_HINT_PAUSE_BACK_OK")
 	return true

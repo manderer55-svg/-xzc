@@ -26,4 +26,4 @@ if ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
     xdpyinfo -display "$DISPLAY" >/dev/null 2>&1 || { echo 'Virtual display was not ready.' >&2; exit 1; }
 fi
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --editor --import
-bash "$PROJECT_ROOT/tools/run_game.sh" --audio-driver Dummy --resolution 720x1280 -- --smoke
+bash "$PROJECT_ROOT/tools/run_game.sh" --audio-driver Dummy --resolution "${ASHEN_PREVIEW_RESOLUTION:-720x1280}" -- --smoke

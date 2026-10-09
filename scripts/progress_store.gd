@@ -5,6 +5,9 @@ extends RefCounted
 const RESOURCE_KEYS := ["stone", "wood", "essence"]
 const MAX_RESOURCE := 1000000000
 const MAX_LEVEL := 1000000
+const MAX_REWARD_PERCENT := 30
+const MAX_ESSENCE_BOOST := 4
+const SETTING_KEYS := ["reduced_effects", "haptics"]
 
 var path: String = "user://progress.json"
 var data: Dictionary = {}
@@ -21,7 +24,7 @@ func _init() -> void:
 
 func defaults() -> Dictionary:
 	return {
-		"version": 1,
+		"version": 2,
 		"level": 1,
 		"best_scores": {},
 		"resources": {"stone": 70, "wood": 50, "essence": 5},
@@ -29,6 +32,7 @@ func defaults() -> Dictionary:
 		"upgrades": [0, 0, 0, 0, 0, 0, 0, 0, 0],
 		"banked_levels": {},
 		"last_mine_time": int(Time.get_unix_time_from_system()),
+		"settings": {"reduced_effects": false, "haptics": true},
 	}
 
 
@@ -84,7 +88,7 @@ func save_progress() -> bool:
 	return true
 
 
-func award_level(level: int, score: int, won: bool, collected: Dictionary) -> Dictionary:
+func award_level(level: int, score: int, won: bool, collected: Dictionary, bonuses: Dictionary = {}) -> Dictionary:
 	var rewards := {"stone": 0, "wood": 0, "essence": 0}
 	last_error = ""
 	last_award_status = "invalid"
@@ -110,9 +114,14 @@ func award_level(level: int, score: int, won: bool, collected: Dictionary) -> Di
 			"wood": 6 + mini(safe_score / 250, 80) + count / 8,
 			"essence": 3 + mini(safe_score / 500, 40) + count / 14,
 		}
+		var reward_percent := _number(bonuses.get("reward_percent", 0), 0, MAX_REWARD_PERCENT, 0)
+		var essence_boost := _number(bonuses.get("essence_boost", 0), 0, MAX_ESSENCE_BOOST, 0)
+		# A boss first clear pays eight extra essence; it uses the same anti-replay bank.
+		rewards["essence"] = int(rewards["essence"]) + essence_boost + (8 if level % 10 == 0 else 0)
 		for resource in RESOURCE_KEYS:
 			var previous := int(data["resources"][resource])
-			var credited := mini(MAX_RESOURCE, previous + int(rewards[resource]))
+			var scaled := int(rewards[resource]) * (100 + reward_percent) / 100
+			var credited := mini(MAX_RESOURCE, previous + scaled)
 			rewards[resource] = credited - previous
 			data["resources"][resource] = credited
 		data["banked_levels"][key] = true
@@ -122,6 +131,18 @@ func award_level(level: int, score: int, won: bool, collected: Dictionary) -> Di
 		last_award_status = "save_failed"
 		return {"stone": 0, "wood": 0, "essence": 0}
 	return rewards
+
+
+func update_setting(name: String, value: bool) -> bool:
+	if not name in SETTING_KEYS:
+		last_error = "Неизвестная настройка."
+		return false
+	var before := data.duplicate(true)
+	data["settings"][name] = value
+	if not save_progress():
+		data = before
+		return false
+	return true
 
 
 func _valid_shape(value: Variant) -> bool:
@@ -151,6 +172,12 @@ func _normalize(value: Dictionary) -> Dictionary:
 	for key in value.get("banked_levels", {}):
 		if str(key).is_valid_int() and int(key) >= 1 and int(key) <= MAX_LEVEL and value["banked_levels"][key] == true:
 			result["banked_levels"][str(int(key))] = true
+	# Version-one saves have no settings. Malformed preferences never erase campaign data.
+	var settings: Variant = value.get("settings", {})
+	if settings is Dictionary:
+		for key in SETTING_KEYS:
+			if settings.get(key) is bool:
+				result["settings"][key] = settings[key]
 	return result
 
 

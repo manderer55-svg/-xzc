@@ -107,6 +107,50 @@ func production() -> Dictionary:
 	return output
 
 
+func battle_bonuses() -> Dictionary:
+	var output := {
+		"bonus_moves": 0,
+		"starting_specials": 0,
+		"boss_damage_bonus": 0,
+		"reward_percent": 0,
+		"essence_boost": 0,
+	}
+	var tiers := _strongest_tiers()
+	if tiers[0] >= 0:
+		output["bonus_moves"] += 1 + int(tiers[0] >= 2)
+	if tiers[1] >= 0:
+		output["bonus_moves"] += 1
+		output["reward_percent"] += 5 * (tiers[1] + 1)
+	if tiers[2] >= 0:
+		output["starting_specials"] = 1 + int(tiers[2] >= 2)
+		output["essence_boost"] = tiers[2] + 1
+	if tiers[3] >= 0:
+		output["boss_damage_bonus"] = 1 + int(tiers[3] >= 2)
+		output["reward_percent"] += 10 + tiers[3] * 5
+	output["bonus_moves"] = mini(3, int(output["bonus_moves"]))
+	output["reward_percent"] = mini(ProgressStore.MAX_REWARD_PERCENT, int(output["reward_percent"]))
+	return output
+
+
+func bonus_descriptions() -> Array[String]:
+	var descriptions: Array[String] = []
+	var tiers := _strongest_tiers()
+	if tiers[0] >= 0:
+		var moves := 1 + int(tiers[0] >= 2)
+		descriptions.append("Каменоломня: +%d %s в каждом разломе." % [moves, "ход" if moves == 1 else "хода"])
+	if tiers[1] >= 0:
+		descriptions.append("Лесопилка: +1 ход и +%d%% к наградам за победу." % (5 * (tiers[1] + 1)))
+	if tiers[2] >= 0:
+		descriptions.append("Святилище: спецкристаллы в начале — %d; эссенция за победу +%d." % [1 + int(tiers[2] >= 2), tiers[2] + 1])
+	if tiers[3] >= 0:
+		descriptions.append("Крепость: +%d урона боссам и +%d%% к наградам." % [1 + int(tiers[3] >= 2), 10 + tiers[3] * 5])
+	if descriptions.is_empty():
+		descriptions.append("Постройте здания, чтобы усилить походы в разломы.")
+	elif tiers[1] >= 0 and tiers[3] >= 0:
+		descriptions.append("Общий бонус наград: +%d%% (предел +30%%)." % int(battle_bonuses()["reward_percent"]))
+	return descriptions
+
+
 func mine() -> Dictionary:
 	var empty := {"stone": 0, "wood": 0, "essence": 0}
 	if store == null:
@@ -162,6 +206,18 @@ func _accrue(now: int) -> Dictionary:
 
 func _valid_slot(slot: int) -> bool:
 	return store != null and slot >= 0 and slot < 9
+
+
+func _strongest_tiers() -> Array[int]:
+	# Duplicate buildings increase production, but only the strongest of each kind aids battle.
+	var tiers: Array[int] = [-1, -1, -1, -1]
+	if store == null:
+		return tiers
+	for slot in range(9):
+		var kind := int(store.data["buildings"][slot])
+		if kind >= 0 and kind < tiers.size():
+			tiers[kind] = maxi(tiers[kind], clampi(int(store.data["upgrades"][slot]), 0, MAX_UPGRADE))
+	return tiers
 
 
 func _can_pay(cost: Dictionary) -> bool:

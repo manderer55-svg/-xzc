@@ -31,6 +31,7 @@ func _initialize() -> void:
 	model.configure(restored)
 	_check(model.build(0, 0)["ok"], "a modest starting campaign can build one quarry")
 	_check(model.production()["stone"] == 8, "quarry has minute production")
+	_check(model.battle_bonuses()["bonus_moves"] == 1, "building a quarry helps the next battle")
 	_check(not model.build(0, 1)["ok"], "occupied plot is protected")
 	_check(not model.build(-1, 0)["ok"], "invalid plot is protected")
 	var built: Dictionary = restored.data.duplicate(true)
@@ -50,6 +51,7 @@ func _initialize() -> void:
 	DirAccess.make_dir_absolute(blocked_directory)
 	restored.path = blocked_path
 	var before_failed_save: Dictionary = restored.data.duplicate(true)
+	_check(not restored.update_setting("reduced_effects", true) and restored.data == before_failed_save, "setting changes roll back when persistence fails")
 	_check(not model.build(1, 0)["ok"], "construction reports failed persistence")
 	_check(restored.data == before_failed_save, "construction rolls back when saving fails")
 	var failed_reward: Dictionary = restored.award_level(2, 4000, true, {0: 50})
@@ -87,11 +89,13 @@ func _initialize() -> void:
 	_check(recovery.data["level"] == 1, "corrupt save has safe runtime defaults")
 	_check(recovery.save_progress(), "recovery can save once original is backed up")
 	_check(FileAccess.get_file_as_string(recovery.corrupt_backup_path) == "{broken-json", "backup retains original bytes after save")
+	_test_migration_and_settings()
+	_test_bonuses()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(recovery.corrupt_backup_path))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(broken_path))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
 	if failures == 0:
-		print("PASS: progress persistence, first-clear rewards, settlement transactions, mining and recovery")
+		print("PASS: progress persistence, first-clear rewards, settlement bonuses, version-one migration, settings, mining and recovery")
 	quit(0 if failures == 0 else 1)
 
 
@@ -99,3 +103,77 @@ func _check(condition: bool, description: String) -> void:
 	if not condition:
 		failures += 1
 		push_error("FAIL: " + description)
+
+
+func _test_migration_and_settings() -> void:
+	var legacy = Progress.new()
+	var legacy_data: Dictionary = legacy.defaults()
+	legacy_data["version"] = 1
+	legacy_data.erase("settings")
+	legacy_data["level"] = 27
+	legacy_data["resources"] = {"stone": 324, "wood": 235, "essence": 88}
+	legacy_data["buildings"] = [0, 1, 2, 3, -1, -1, -1, -1, -1]
+	legacy_data["upgrades"] = [1, 2, 3, 0, 0, 0, 0, 0, 0]
+	legacy_data["best_scores"] = {"26": 6000}
+	legacy_data["banked_levels"] = {"26": true}
+	var legacy_path := save_path + ".legacy"
+	var file := FileAccess.open(legacy_path, FileAccess.WRITE)
+	file.store_string(JSON.stringify(legacy_data))
+	file.close()
+	legacy.path = legacy_path
+	_check(legacy.load_progress() and legacy.data["version"] == 2, "version-one progress upgrades to current schema")
+	for key in ["level", "resources", "buildings", "upgrades", "best_scores", "banked_levels", "last_mine_time"]:
+		_check(legacy.data[key] == legacy_data[key], "migration preserves " + key)
+	_check(legacy.data["settings"] == {"reduced_effects": false, "haptics": true}, "old saves receive safe default settings")
+	_check(legacy.update_setting("reduced_effects", true) and legacy.update_setting("haptics", false), "known settings are saved")
+	var reloaded = Progress.new()
+	reloaded.path = legacy_path
+	_check(reloaded.load_progress() and reloaded.data["settings"] == {"reduced_effects": true, "haptics": false}, "settings survive a save roundtrip")
+	var before: Dictionary = reloaded.data.duplicate(true)
+	_check(not reloaded.update_setting("unknown", true) and reloaded.data == before, "unknown settings cannot mutate campaign data")
+	file = FileAccess.open(legacy_path, FileAccess.WRITE)
+	legacy_data["settings"] = {"reduced_effects": "true", "haptics": 0}
+	file.store_string(JSON.stringify(legacy_data))
+	file.close()
+	_check(reloaded.load_progress() and reloaded.data["level"] == 27, "invalid setting types keep valid campaign progress")
+	_check(reloaded.data["settings"] == {"reduced_effects": false, "haptics": true}, "invalid setting types normalize without truthiness conversion")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(legacy_path))
+
+
+func _test_bonuses() -> void:
+	var progress = Progress.new()
+	progress.path = save_path + ".bonuses"
+	progress.data["resources"] = {"stone": 100000, "wood": 100000, "essence": 100000}
+	var model = Settlement.new()
+	model.configure(progress)
+	_check(model.battle_bonuses() == {"bonus_moves": 0, "starting_specials": 0, "boss_damage_bonus": 0, "reward_percent": 0, "essence_boost": 0}, "an empty settlement grants no battle bonus")
+	for kind in range(4):
+		_check(model.build(kind, kind)["ok"], "each building kind is constructible")
+	var initial: Dictionary = model.battle_bonuses()
+	_check(initial == {"bonus_moves": 2, "starting_specials": 1, "boss_damage_bonus": 1, "reward_percent": 15, "essence_boost": 1}, "four initial buildings provide four concrete battle benefits")
+	for slot in range(4):
+		for tier in range(3):
+			_check(model.upgrade(slot)["ok"], "upgrading building %d tier %d succeeds" % [slot, tier + 1])
+	var full: Dictionary = model.battle_bonuses()
+	_check(full == {"bonus_moves": 3, "starting_specials": 2, "boss_damage_bonus": 2, "reward_percent": 30, "essence_boost": 4}, "fully upgraded battle bonuses stop at fair caps")
+	for slot in range(4, 9):
+		_check(model.build(slot, mini(slot - 4, 3))["ok"], "duplicate buildings may increase production")
+		for tier in range(3):
+			_check(model.upgrade(slot)["ok"], "duplicate buildings may be upgraded")
+	_check(model.battle_bonuses() == full, "nine building slots cannot multiply battle bonuses")
+	var descriptions: Array[String] = model.bonus_descriptions()
+	for title in Settlement.TITLES:
+		_check(title in "\n".join(descriptions), "built building bonus has Russian explanation: " + title)
+	progress.data["resources"] = {"stone": 0, "wood": 0, "essence": 0}
+	var rewards: Dictionary = progress.award_level(1, 1800, true, {0: 42}, full)
+	_check(rewards == {"stone": 32, "wood": 23, "essence": 16}, "bounded bonuses scale score-based first-clear rewards")
+	var balance: Dictionary = progress.data["resources"].duplicate()
+	var repeat: Dictionary = progress.award_level(1, 100000, true, {0: 250}, full)
+	_check(repeat == {"stone": 0, "wood": 0, "essence": 0} and progress.data["resources"] == balance, "bonuses cannot bypass first-clear anti-farming")
+	progress.data["level"] = 10
+	var boss_reward: Dictionary = progress.award_level(10, 0, true, {})
+	_check(boss_reward["essence"] == 11, "boss first clear grants modest extra essence")
+	progress.data["level"] = 11
+	var clamped: Dictionary = progress.award_level(11, 0, true, {}, {"reward_percent": 999999, "essence_boost": 999999})
+	_check(clamped == {"stone": 10, "wood": 7, "essence": 9}, "untrusted reward bonus inputs are clamped")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(progress.path))
