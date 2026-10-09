@@ -6,5 +6,7 @@ bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_matc
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_progress.gd
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_objectives.gd
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_generated_number.gd
+bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_generated_frame.gd
+bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_board_contour.gd
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_ui_pool.gd
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --audio-driver Dummy -- --smoke

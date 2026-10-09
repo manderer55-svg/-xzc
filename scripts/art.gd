@@ -5,6 +5,7 @@ extends RefCounted
 
 static var _cache: Dictionary = {}
 static var _atlases: Dictionary = {}
+static var _contour_cache: Dictionary = {}
 const ROOT := "res://art/darkfantasy/"
 const GEM_NAMES := ["gem_0", "gem_1", "gem_2", "gem_3", "gem_4", "gem_5",
 	"special_row", "special_column", "special_bomb", "special_nova",
@@ -14,6 +15,11 @@ const BUILDING_NAMES := ["ground", "quarry", "sawmill", "shrine", "fortress",
 const POWER_NAMES := ["special_row", "special_column", "special_bomb", "special_nova"]
 const CAMPAIGN_NAMES := ["boss_portrait", "altar", "altar_lit", "forest_badge"]
 const SEAL_NAMES := ["blocker_stone", "blocker_ice", "selection", "coin"]
+const FRAME_REGIONS := [Rect2(72, 93, 525, 496), Rect2(659, 93, 525, 496),
+	Rect2(73, 665, 525, 497), Rect2(659, 665, 525, 497)]
+const FRAME_KEYS := {"ui_header": 0, "ui_panel": 0, "ui_result": 0,
+	"ui_badge": 0, "ui_button": 2, "ui_small_button": 1,
+	"ui_slot": 3, "cell": 3, "ui_progress": 3}
 ## A common selection preserves every visible crystal face and its proportions.
 ## The originals remain untouched; only transparent atlas gutters are omitted.
 const GEM_REGION := Rect2(16, 0, 480, 480)
@@ -22,18 +28,6 @@ const DIGIT_REGIONS := [Rect2(77, 33, 266, 310), Rect2(449, 28, 200, 313),
 	Rect2(433, 388, 240, 318), Rect2(766, 388, 260, 320), Rect2(1135, 389, 238, 311),
 	Rect2(69, 733, 264, 319), Rect2(425, 730, 254, 319), Rect2(759, 757, 283, 272),
 	Rect2(1116, 773, 256, 249)]
-const UI_REGIONS := {
-	"ui_header": Rect2(29, 124, 381, 128),
-	"ui_panel": Rect2(435, 100, 387, 174),
-	"ui_button": Rect2(847, 120, 381, 140),
-	"ui_small_button": Rect2(29, 527, 382, 141),
-	"ui_result": Rect2(436, 414, 385, 361),
-	"ui_badge": Rect2(847, 498, 381, 194),
-	"ui_progress": Rect2(29, 963, 381, 78),
-	"ui_progress_fill": Rect2(877, 148, 319, 84),
-	"ui_slot": Rect2(438, 819, 378, 365),
-	"cell": Rect2(850, 817, 375, 365),
-}
 
 static func texture(asset_name: String) -> Texture2D:
 	if _cache.has(asset_name):
@@ -54,11 +48,10 @@ static func texture(asset_name: String) -> Texture2D:
 		result = _grid_region("campaign", CAMPAIGN_NAMES.find(asset_name), 2, 2)
 	elif SEAL_NAMES.has(asset_name):
 		result = _grid_region("seals_clean", SEAL_NAMES.find(asset_name), 2, 2)
-	elif UI_REGIONS.has(asset_name):
-		var source := _atlas("ui_clean")
-		var source_rect: Rect2 = UI_REGIONS[asset_name]
-		var ratio := source.get_size() / Vector2(1254, 1254)
-		result = _region(source, Rect2(source_rect.position * ratio, source_rect.size * ratio))
+	elif FRAME_KEYS.has(asset_name):
+		result = _region(_atlas("ui_nine_slice"), FRAME_REGIONS[int(FRAME_KEYS[asset_name])])
+	elif asset_name == "ui_progress_fill":
+		result = _region(_atlas("ui_nine_slice"), Rect2(140, 730, 400, 130))
 	elif GEM_NAMES.has(asset_name):
 		result = _grid_region("gems", GEM_NAMES.find(asset_name), 4, 4)
 	elif BUILDING_NAMES.has(asset_name):
@@ -80,6 +73,22 @@ static func texture(asset_name: String) -> Texture2D:
 		return null
 	_cache[asset_name] = result
 	return result
+
+static func frame_spec(asset_name: String) -> Dictionary:
+	if not FRAME_KEYS.has(asset_name):
+		return {}
+	return {"texture": texture(asset_name), "margins": Vector4(54, 54, 54, 54),
+		"scale": 0.1 if asset_name == "ui_progress" else 0.5}
+
+static func contour_spec() -> Dictionary:
+	if not _contour_cache.is_empty():
+		return _contour_cache
+	var source := _atlas("contour_edges")
+	_contour_cache = {"edge": _region(source, Rect2(90, 306, 460, 36)),
+		"convex": _region(source, Rect2(796, 160, 328, 328)),
+		"concave": _region(source, Rect2(156, 787, 328, 328)),
+		"edge_height": 4.2, "corner_size": 40.0, "edge_overlap": 1.5}
+	return _contour_cache
 
 static func _atlas(atlas_name: String) -> Texture2D:
 	if not _atlases.has(atlas_name):

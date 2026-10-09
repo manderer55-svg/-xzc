@@ -27,3 +27,4 @@ if ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
 fi
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --editor --import
 bash "$PROJECT_ROOT/tools/run_game.sh" --audio-driver Dummy --resolution "${ASHEN_PREVIEW_RESOLUTION:-720x1280}" -- --smoke
+bash "$PROJECT_ROOT/tools/run_game.sh" --audio-driver Dummy --script res://tests/test_generated_frame.gd

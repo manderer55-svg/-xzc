@@ -58,6 +58,7 @@ var home_region_label: Label
 var game_screen: Control
 var settlement_screen: Control
 var cells_layer: Control
+var board_contour: BoardContour
 var gems_layer: Control
 var effects_layer: Control
 var selection_ring: TextureRect
@@ -136,6 +137,14 @@ func _texture(parent: Node, key: String, position: Vector2, dimensions: Vector2)
 	return node
 
 
+func _frame(parent: Node, key: String, position: Vector2, dimensions: Vector2) -> GeneratedFrame:
+	var node := GeneratedFrame.new()
+	node.configure(key, dimensions)
+	node.position = position
+	parent.add_child(node)
+	return node
+
+
 func _label(parent: Node, text_value: String, position: Vector2, dimensions: Vector2, font_size: int = 24, color: Color = IVORY, centered: bool = false) -> Label:
 	var node := Label.new()
 	node.text = text_value
@@ -157,13 +166,7 @@ func _label(parent: Node, text_value: String, position: Vector2, dimensions: Vec
 
 func _button(parent: Node, text_value: String, position: Vector2, dimensions: Vector2, action: Callable, small: bool = false) -> TextureButton:
 	var node := TextureButton.new()
-	var texture: Texture2D = Art.texture("ui_small_button" if small else "ui_button")
-	node.texture_normal = texture
-	node.texture_pressed = texture
-	node.texture_hover = texture
-	node.texture_disabled = texture
 	node.ignore_texture_size = true
-	node.stretch_mode = TextureButton.STRETCH_SCALE
 	node.position = position
 	node.size = dimensions
 	node.focus_mode = Control.FOCUS_ALL
@@ -173,6 +176,10 @@ func _button(parent: Node, text_value: String, position: Vector2, dimensions: Ve
 	node.mouse_entered.connect(func(): if not node.disabled: node.modulate = Color(1.15, 1.08, 0.95))
 	node.mouse_exited.connect(func(): node.modulate = Color.WHITE)
 	parent.add_child(node)
+	var frame := _frame(node, "ui_small_button" if small else "ui_button", Vector2.ZERO, dimensions)
+	frame.name = "GeneratedButtonFrame"
+	node.custom_minimum_size = frame.minimum_display_size()
+	node.resized.connect(func(): frame.set_display_size(node.size))
 	_label(node, text_value, Vector2(12, 0), dimensions - Vector2(24, 0), 26 if not small else 24, GOLD, true)
 	return node
 
@@ -272,31 +279,31 @@ func _build_game_screen() -> void:
 	game_screen = _new_screen()
 	game_screen.visible = false
 	game_background = _texture(game_screen, "background", Vector2.ZERO, CANVAS)
-	_texture(game_screen, "ui_header", Vector2(24, 12), Vector2(672, 99))
+	_frame(game_screen, "ui_header", Vector2(24, 12), Vector2(672, 99))
 	_label(game_screen, "ПЕПЕЛЬНЫЙ ПРЕДЕЛ", Vector2(60, 21), Vector2(600, 45), 30, GOLD, true)
 	level_label = _label(game_screen, "Проклятый лес · разлом", Vector2(100, 67), Vector2(386, 32), 19, IVORY, true)
 	level_number = _number(game_screen, "1", Vector2(483, 65), Vector2(148, 36))
 	_button(game_screen, "Главная", Vector2(24, 119), Vector2(210, 112), _show_home, true)
 	_button(game_screen, "Уровни", Vector2(249, 119), Vector2(210, 112), _open_level_picker, true)
 	_button(game_screen, "Правила", Vector2(474, 119), Vector2(222, 112), _open_help, true)
-	_texture(game_screen, "ui_panel", Vector2(24, 235), Vector2(440, 148))
+	_frame(game_screen, "ui_panel", Vector2(24, 235), Vector2(440, 148))
 	mission_icon = _texture(game_screen, "gem_0", Vector2(50, 262), Vector2(69, 69))
 	mission_description = _label(game_screen, "", Vector2(127, 249), Vector2(303, 49), 21, IVORY)
 	mission_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	objective_number = _number(game_screen, "0", Vector2(127, 300), Vector2(108, 46))
 	_label(game_screen, "/", Vector2(237, 303), Vector2(23, 38), 23, MUTED, true)
 	target_number = _number(game_screen, "0", Vector2(265, 300), Vector2(168, 46))
-	_texture(game_screen, "ui_progress", Vector2(53, 355), Vector2(379, 15)).modulate = Color(0.3, 0.3, 0.35)
+	_frame(game_screen, "ui_progress", Vector2(53, 355), Vector2(379, 15)).modulate = Color(0.3, 0.3, 0.35)
 	progress_fill = _texture(game_screen, "ui_progress_fill", Vector2(53, 355), Vector2(0, 15))
-	_texture(game_screen, "ui_panel", Vector2(478, 235), Vector2(218, 148))
+	_frame(game_screen, "ui_panel", Vector2(478, 235), Vector2(218, 148))
 	_label(game_screen, "ХОДЫ", Vector2(494, 252), Vector2(186, 30), 19, MUTED, true)
 	moves_label = _number(game_screen, "30", Vector2(506, 286), Vector2(162, 70), true)
 	shape_label = _label(game_screen, "", Vector2(38, 384), Vector2(644, 31), 18, IVORY, true)
-	_texture(game_screen, "ui_result", Vector2(28, 413), Vector2(664, 595))
 	cells_layer = Control.new()
+	board_contour = BoardContour.new()
 	gems_layer = Control.new()
 	effects_layer = Control.new()
-	for layer: Control in [cells_layer, gems_layer, effects_layer]:
+	for layer: Control in [cells_layer, board_contour, gems_layer, effects_layer]:
 		layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		layer.size = CANVAS
 		game_screen.add_child(layer)
@@ -333,12 +340,12 @@ func _build_settlement_screen() -> void:
 	settlement_screen = _new_screen()
 	settlement_screen.visible = false
 	_texture(settlement_screen, "settlement_background", Vector2.ZERO, CANVAS)
-	_texture(settlement_screen, "ui_header", Vector2(20, 18), Vector2(680, 120))
+	_frame(settlement_screen, "ui_header", Vector2(20, 18), Vector2(680, 120))
 	_label(settlement_screen, "ЦИТАДЕЛЬ ПЕПЛА", Vector2(58, 63), Vector2(604, 34), 27, GOLD, true)
 	_label(settlement_screen, "ОСКОЛКИ ПИТАЮТ ВАШЕ ВЛАДЕНИЕ", Vector2(58, 86), Vector2(604, 28), 15, MUTED, true)
 	for i in range(3):
 		var x := 24.0 + i * 229.0
-		_texture(settlement_screen, "ui_panel", Vector2(x, 155), Vector2(214, 103))
+		_frame(settlement_screen, "ui_panel", Vector2(x, 155), Vector2(214, 103))
 		_texture(settlement_screen, ["stone", "wood", "essence"][i], Vector2(x + 12, 173), Vector2(62, 62))
 		_label(settlement_screen, ["КАМЕНЬ", "ДРЕВО", "ЭССЕНЦИЯ"][i], Vector2(x + 77, 170), Vector2(132, 24), 13, MUTED)
 		resource_labels.append(_number(settlement_screen, "0", Vector2(x + 77, 191), Vector2(128, 53)))
@@ -347,7 +354,7 @@ func _build_settlement_screen() -> void:
 	settlement_grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	settlement_grid.size = CANVAS
 	settlement_screen.add_child(settlement_grid)
-	_texture(settlement_screen, "ui_panel", Vector2(24, 670), Vector2(672, 190))
+	_frame(settlement_screen, "ui_panel", Vector2(24, 670), Vector2(672, 190))
 	slot_title = _label(settlement_screen, "", Vector2(64, 695), Vector2(588, 37), 24, GOLD)
 	slot_detail = _label(settlement_screen, "", Vector2(64, 735), Vector2(588, 107), 18, IVORY)
 	slot_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -369,8 +376,8 @@ func _build_result_modal() -> void:
 	modal.visible = false
 	modal.mouse_filter = Control.MOUSE_FILTER_STOP
 	_texture(modal, "background", Vector2.ZERO, CANVAS).modulate = Color(0.2, 0.18, 0.23)
-	_texture(modal, "ui_result", Vector2(40, 257), Vector2(640, 749))
-	_texture(modal, "ui_badge", Vector2(291, 295), Vector2(138, 138))
+	_frame(modal, "ui_result", Vector2(40, 257), Vector2(640, 749))
+	_frame(modal, "ui_badge", Vector2(291, 295), Vector2(138, 138))
 	modal_title = _label(modal, "", Vector2(80, 451), Vector2(560, 56), 34, GOLD, true)
 	modal_body = _label(modal, "", Vector2(100, 523), Vector2(520, 203), 23, IVORY, true)
 	modal_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -383,7 +390,7 @@ func _build_level_modal() -> void:
 	level_modal.visible = false
 	level_modal.mouse_filter = Control.MOUSE_FILTER_STOP
 	_texture(level_modal, "background", Vector2.ZERO, CANVAS).modulate = Color(0.2, 0.18, 0.23)
-	_texture(level_modal, "ui_result", Vector2(40, 280), Vector2(640, 778))
+	_frame(level_modal, "ui_result", Vector2(40, 280), Vector2(640, 778))
 	_label(level_modal, "ВРАТА ИСПЫТАНИЙ", Vector2(80, 375), Vector2(560, 50), 29, GOLD, true)
 	_label(level_modal, "Процедурные разломы разных форм", Vector2(70, 437), Vector2(580, 36), 17, MUTED, true)
 	level_choice_label = _number(level_modal, "1", Vector2(205, 505), Vector2(310, 91), true)
@@ -407,7 +414,7 @@ func _build_utility_modal() -> void:
 	utility_modal.visible = false
 	utility_modal.mouse_filter = Control.MOUSE_FILTER_STOP
 	_texture(utility_modal, "background", Vector2.ZERO, CANVAS).modulate = Color(0.18, 0.18, 0.22)
-	_texture(utility_modal, "ui_result", Vector2(40, 265), Vector2(640, 796))
+	_frame(utility_modal, "ui_result", Vector2(40, 265), Vector2(640, 796))
 	utility_title = _label(utility_modal, "", Vector2(86, 387), Vector2(548, 57), 29, GOLD, true)
 	utility_body = _label(utility_modal, "", Vector2(88, 465), Vector2(544, 370), 22, IVORY)
 	utility_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -508,6 +515,7 @@ func _load_level(number: int) -> void:
 	tile_size = minf(minf(620.0 / width, 564.0 / height), 78.0)
 	board_size = Vector2(width, height) * tile_size
 	board_origin = Vector2((720.0 - board_size.x) / 2.0, 428.0 + (568.0 - board_size.y) / 2.0)
+	board_contour.configure(engine.cells.keys(), board_origin, tile_size)
 	for cell: Vector2i in cell_nodes:
 		cell_nodes[cell].visible = engine.cells.has(cell)
 		cell_nodes[cell].position = _cell_origin(cell)
@@ -1149,12 +1157,17 @@ func _notification(what: int) -> void:
 func _smoke() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
+	if not _smoke_frames():
+		get_tree().quit(1)
+		return
 	var preview_dir := ProjectSettings.globalize_path("res://art/preview")
 	DirAccess.make_dir_recursive_absolute(preview_dir)
 	if not await _smoke_home_navigation(preview_dir):
 		get_tree().quit(1)
 		return
 	await _capture_preview(preview_dir.path_join("gameplay.png"))
+	var contour_generation := board_contour.rebuild_count
+	var contour_nodes := board_contour.get_children().map(func(node: Node): return node.get_instance_id())
 	var legal: Array = engine.legal_moves()
 	if not legal.is_empty():
 		var move = legal[0]
@@ -1196,6 +1209,11 @@ func _smoke() -> void:
 				get_tree().quit(1)
 				return
 			print("UI_SMOKE_TOUCH_OK score=", engine.score, " moves=", engine.moves)
+	if board_contour.rebuild_count != contour_generation or board_contour.get_children().map(func(node: Node): return node.get_instance_id()) != contour_nodes:
+		push_error("UI_SMOKE_CONTOUR_REBUILT_DURING_TURN")
+		get_tree().quit(1)
+		return
+	print("UI_SMOKE_CONTOUR_OK edges=", board_contour.topology.edges.size(), " stable_during_turns=true")
 	if DisplayServer.get_name() != "headless":
 		Engine.time_scale = 0.1
 		_spawn_fx("fx_lightning", board_origin + board_size * 0.5, Vector2(board_size.x + 80, tile_size * 1.8))
@@ -1229,6 +1247,33 @@ func _smoke() -> void:
 		return
 	print("UI_SMOKE_OK")
 	get_tree().quit()
+
+
+func _smoke_frames() -> bool:
+	var pending: Array[Node] = [self]
+	var frames := 0
+	var frame_buttons := 0
+	while not pending.is_empty():
+		var node: Node = pending.pop_back()
+		for child in node.get_children():
+			pending.append(child)
+		if node is GeneratedFrame:
+			frames += 1
+			var spec: Dictionary = Art.frame_spec(node.frame_key)
+			if node.texture != spec.texture or not node.displayed_border_widths().is_equal_approx(spec.margins * float(spec.scale)):
+				push_error("UI_SMOKE_FRAME_CORNERS_CHANGED")
+				return false
+		if node is TextureButton and node.has_node("GeneratedButtonFrame"):
+			frame_buttons += 1
+			var frame: GeneratedFrame = node.get_node("GeneratedButtonFrame")
+			if node.texture_normal != null or frame.mouse_filter != Control.MOUSE_FILTER_IGNORE or not (frame.size * frame.scale).is_equal_approx(node.size):
+				push_error("UI_SMOKE_STRETCHED_BUTTON_FRAME")
+				return false
+	if frames < 14 or frame_buttons < 20:
+		push_error("UI_SMOKE_FRAME_COVERAGE_FAILED")
+		return false
+	print("UI_SMOKE_FRAMES_OK frames=", frames, " buttons=", frame_buttons, " fixed_corners=true")
+	return true
 
 
 func _capture_preview(path: String) -> void:
@@ -1376,10 +1421,14 @@ func _smoke_objectives_and_pools(preview_dir: String) -> bool:
 	await _capture_preview(preview_dir.path_join("settings.png"))
 	_toggle_setting("reduced_effects")
 	_close_utility()
+	_load_level(6)
+	await _capture_preview(preview_dir.path_join("board_ring.png"))
 	for number in [2, 3, 4, 10]:
 		_load_level(number)
 		var kind: String = engine.objective_state().kind
 		await _capture_preview(preview_dir.path_join("mission_%s.png" % kind))
+		if number in [2, 3]:
+			await _capture_preview(preview_dir.path_join("board_%s.png" % String(engine.level_data.shape)))
 		var turns := 3 if number == 10 else 1
 		var static_altar_positions: Dictionary = {}
 		for cell: Vector2i in engine.altars:
