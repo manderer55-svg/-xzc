@@ -7,7 +7,7 @@ const MAX_RESOURCE := 1000000000
 const MAX_LEVEL := 1000000
 const MAX_REWARD_PERCENT := 30
 const MAX_ESSENCE_BOOST := 4
-const SETTING_KEYS := ["reduced_effects", "haptics"]
+const SETTING_KEYS := ["reduced_effects", "haptics", "sound"]
 
 var path: String = "user://progress.json"
 var data: Dictionary = {}
@@ -32,7 +32,10 @@ func defaults() -> Dictionary:
 		"upgrades": [0, 0, 0, 0, 0, 0, 0, 0, 0],
 		"banked_levels": {},
 		"last_mine_time": int(Time.get_unix_time_from_system()),
-		"settings": {"reduced_effects": false, "haptics": true},
+		"settings": {"reduced_effects": false, "haptics": true, "sound": true},
+		"colony_mode": false,
+		"colony_pending": {"stone": 0, "wood": 0, "essence": 0},
+		"bunker_level": 0,
 	}
 
 
@@ -159,12 +162,18 @@ func _valid_shape(value: Variant) -> bool:
 
 func _normalize(value: Dictionary) -> Dictionary:
 	var result := defaults()
+	result["colony_mode"] = value.get("colony_mode", false) == true
+	result["bunker_level"] = _number(value.get("bunker_level", 0), 0, 3, 0)
+	var pending: Variant = value.get("colony_pending", {})
+	if pending is Dictionary:
+		for resource in RESOURCE_KEYS:
+			result["colony_pending"][resource] = _number(pending.get(resource, 0), 0, MAX_RESOURCE, 0)
 	result["level"] = _number(value.get("level", 1), 1, MAX_LEVEL, 1)
 	result["last_mine_time"] = _number(value.get("last_mine_time", result["last_mine_time"]), 0, 4000000000, int(result["last_mine_time"]))
 	for key in RESOURCE_KEYS:
 		result["resources"][key] = _number(value.get("resources", {}).get(key, result["resources"][key]), 0, MAX_RESOURCE, int(result["resources"][key]))
 	for slot in range(9):
-		result["buildings"][slot] = _number(value.get("buildings", result["buildings"])[slot], -1, 3, -1)
+		result["buildings"][slot] = _number(value.get("buildings", result["buildings"])[slot], -1, 5, -1)
 		result["upgrades"][slot] = _number(value.get("upgrades", result["upgrades"])[slot], 0, 3, 0) if result["buildings"][slot] >= 0 else 0
 	for key in value.get("best_scores", {}):
 		if str(key).is_valid_int() and int(key) >= 1 and int(key) <= MAX_LEVEL:

@@ -37,7 +37,7 @@ func _test_recipes() -> void:
 		if target_colors.has(objective.kind):
 			var histogram: Dictionary = target_colors[objective.kind]
 			histogram[objective.color] = int(histogram.get(objective.color, 0)) + 1
-		_check(recipe.region == "Проклятый лес", "region is included in level %d" % level)
+		_check(recipe.region in Generator.REGIONS, "region is included in level %d" % level)
 		_check(int(objective.target) > 0, "level %d objective requires actual work" % level)
 		_check((objective.kind == "boss") == (level % 10 == 0), "boss appears every tenth level %d" % level)
 		if objective.kind == "seals":
@@ -48,7 +48,7 @@ func _test_recipes() -> void:
 				_check(altar in recipe.mask and not recipe.blockers.has(altar), "altar occupies usable slot at level %d" % level)
 		if objective.kind == "boss":
 			_check(recipe.boss.hp == objective.target and recipe.boss.attack_every == 3, "boss recipe has consistent health and cadence")
-	_check(kinds.size() == 5, "five genuinely different mission kinds")
+	_check(kinds.size() == 6, "six genuinely different mission kinds")
 	_check(target_colors.collect.size() == 6 and target_colors.boss.size() == 6, "collection and boss missions vary across all six gem colors")
 	print("MISSION COLORS (first 1,000 levels): ", target_colors)
 	completed_sections += 1
@@ -225,7 +225,7 @@ func _test_bonuses() -> void:
 	twin.initialize(10, supplied)
 	_check(engine.snapshot() == twin.snapshot() and engine.objective_state() == twin.objective_state(), "bonused board deterministic")
 	engine.initialize(1, {"bonus_moves": -9, "starting_specials": "invalid", "boss_damage_bonus": NAN})
-	_check(engine.moves == engine.level_data.moves and engine.bonuses == {"bonus_moves": 0, "starting_specials": 0, "boss_damage_bonus": 0}, "invalid or negative bonuses are harmless")
+	_check(engine.moves == engine.level_data.moves and engine.bonuses == {"bonus_moves": 0, "starting_specials": 0, "boss_damage_bonus": 0, "forge_bomb": 0, "seal_damage_bonus": 0}, "invalid or negative bonuses are harmless")
 	completed_sections += 1
 
 func _test_cloning() -> void:
@@ -246,6 +246,10 @@ func _fitness(before, projected, outcome: Dictionary) -> float:
 	var old_state: Dictionary = before.objective_state()
 	var new_state: Dictionary = projected.objective_state()
 	var fitness := float(int(new_state.current) - int(old_state.current)) * 1000.0
+	if old_state.kind == "relic":
+		for position in projected.cells:
+			if bool(projected.cells[position].get("relic", false)):
+				fitness += position.y * 100.0
 	if new_state.complete:
 		fitness += 1000000.0
 	if old_state.kind == "seals":
@@ -263,7 +267,7 @@ func _test_balance() -> void:
 	var wins := 0
 	var by_kind: Dictionary = {}
 	var failed_runs: Array = []
-	for level in range(1, 41):
+	for level in range(1, 61):
 		var engine = EngineModel.new()
 		engine.initialize(level)
 		var kind: String = engine.level_data.objective.kind
@@ -300,5 +304,5 @@ func _test_balance() -> void:
 					uncharged.append(position)
 			var state: Dictionary = engine.objective_state()
 			failed_runs.append({"level": level, "kind": kind, "current": state.current, "target": state.target, "moves": engine.moves, "uncharged_altars": uncharged, "original_seals": engine.level_data.blockers, "remaining_seals": engine.blockers})
-	print("BALANCE first 40 levels: %d/40 wins (%.1f%%), one-step objective lookahead, no building bonuses. %s Failed runs: %s" % [wins, wins * 2.5, str(by_kind), str(failed_runs)])
+	print("BALANCE first 60 levels: %d/60 wins (%.1f%%), one-step objective lookahead, no building bonuses. %s Failed runs: %s" % [wins, wins * 100.0 / 60.0, str(by_kind), str(failed_runs)])
 	completed_sections += 1

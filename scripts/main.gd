@@ -10,8 +10,8 @@ const UI_FONT: Font = preload("res://art/fonts/DejaVuSans.ttf")
 const UI_FONT_BOLD: Font = preload("res://art/fonts/DejaVuSans-Bold.ttf")
 const TITLE_FONT: Font = preload("res://art/fonts/DejaVuSerif-Bold.ttf")
 const GEM_NAMES := ["Рубин", "Аметист", "Изумруд", "Сапфир", "Янтарь", "Лунный камень"]
-const BUILDING_KEYS := ["quarry", "sawmill", "shrine", "fortress"]
-const BUILDING_NAMES := ["Каменоломня", "Лесопилка", "Святилище", "Крепость"]
+const BUILDING_KEYS := ["quarry", "sawmill", "shrine", "fortress", "forge", "watchtower"]
+const BUILDING_NAMES := SettlementModel.TITLES
 
 var engine: MatchEngine
 var store: ProgressStore
@@ -71,7 +71,8 @@ var moves_label: GeneratedNumber
 var status_label: Label
 var progress_fill: TextureRect
 var shape_label: Label
-var settlement_grid: Control
+var settlement_grid: MineColony
+var building_choices: Array[TextureButton] = []
 var resource_labels: Array[GeneratedNumber] = []
 var slot_title: Label
 var slot_detail: Label
@@ -97,6 +98,8 @@ var utility_title: Label
 var utility_body: Label
 var reduced_button: TextureButton
 var haptics_button: TextureButton
+var sound_button: TextureButton
+var audio: AudioDirector
 var utility_mode := "help"
 
 
@@ -110,6 +113,9 @@ func _ready() -> void:
 	store.load_progress()
 	settlement = SettlementModel.new()
 	settlement.configure(store)
+	audio = AudioDirector.new()
+	audio.enabled = bool(store.data.settings.sound)
+	add_child(audio)
 	_build_home_screen()
 	_build_game_screen()
 	_build_settlement_screen()
@@ -170,7 +176,9 @@ func _button(parent: Node, text_value: String, position: Vector2, dimensions: Ve
 	node.position = position
 	node.size = dimensions
 	node.focus_mode = Control.FOCUS_ALL
-	node.pressed.connect(action)
+	node.pressed.connect(func():
+		audio.play("tap")
+		action.call())
 	node.button_down.connect(func(): node.modulate = Color(0.77, 0.72, 0.64))
 	node.button_up.connect(func(): node.modulate = Color.WHITE)
 	node.mouse_entered.connect(func(): if not node.disabled: node.modulate = Color(1.15, 1.08, 0.95))
@@ -341,32 +349,39 @@ func _build_settlement_screen() -> void:
 	settlement_screen.visible = false
 	_texture(settlement_screen, "settlement_background", Vector2.ZERO, CANVAS)
 	_frame(settlement_screen, "ui_header", Vector2(20, 18), Vector2(680, 120))
-	_label(settlement_screen, "ЦИТАДЕЛЬ ПЕПЛА", Vector2(58, 63), Vector2(604, 34), 27, GOLD, true)
-	_label(settlement_screen, "ОСКОЛКИ ПИТАЮТ ВАШЕ ВЛАДЕНИЕ", Vector2(58, 86), Vector2(604, 28), 15, MUTED, true)
+	_label(settlement_screen, "РУДНИКИ ПЕПЕЛЬНОГО ПРЕДЕЛА", Vector2(58, 63), Vector2(604, 34), 27, GOLD, true)
+	_label(settlement_screen, "ДОБЫЧА · ДОСТАВКА · СТРОИТЕЛЬСТВО БУНКЕРА", Vector2(58, 86), Vector2(604, 28), 15, MUTED, true)
 	for i in range(3):
 		var x := 24.0 + i * 229.0
 		_frame(settlement_screen, "ui_panel", Vector2(x, 155), Vector2(214, 103))
 		_texture(settlement_screen, ["stone", "wood", "essence"][i], Vector2(x + 12, 173), Vector2(62, 62))
 		_label(settlement_screen, ["КАМЕНЬ", "ДРЕВО", "ЭССЕНЦИЯ"][i], Vector2(x + 77, 170), Vector2(132, 24), 13, MUTED)
 		resource_labels.append(_number(settlement_screen, "0", Vector2(x + 77, 191), Vector2(128, 53)))
-	_label(settlement_screen, "Выберите участок и возведите постройку", Vector2(36, 276), Vector2(648, 42), 19, IVORY, true)
-	settlement_grid = Control.new()
+	_label(settlement_screen, "Выберите участок и возведите постройку", Vector2(36, 258), Vector2(648, 24), 16, IVORY, true)
+	settlement_grid = MineColony.new()
+	settlement_grid.configure(settlement)
+	settlement_grid.selected.connect(_choose_slot)
+	settlement_grid.delivery.connect(func(resource: String, amount: int):
+		settlement_status.text = "На склад доставлено: %s" % _cost_text({resource: amount})
+		_update_settlement())
 	settlement_grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	settlement_grid.size = CANVAS
 	settlement_screen.add_child(settlement_grid)
-	_frame(settlement_screen, "ui_panel", Vector2(24, 670), Vector2(672, 190))
+	_frame(settlement_screen, "ui_panel", Vector2(24, 670), Vector2(672, 166))
 	slot_title = _label(settlement_screen, "", Vector2(64, 695), Vector2(588, 37), 24, GOLD)
-	slot_detail = _label(settlement_screen, "", Vector2(64, 735), Vector2(588, 107), 18, IVORY)
+	slot_detail = _label(settlement_screen, "", Vector2(64, 735), Vector2(588, 96), 18, IVORY)
 	slot_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	for i in range(4):
+	for i in range(BUILDING_KEYS.size()):
 		var key: String = BUILDING_KEYS[i]
-		var button := _button(settlement_screen, "", Vector2(24 + 171 * i, 864), Vector2(159, 120), func(): _choose_kind(i), true)
-		_texture(button, key, Vector2(43, 3), Vector2(74, 68))
-		_label(button, BUILDING_NAMES[i], Vector2(1, 79), Vector2(157, 29), 16, GOLD, true)
-	build_button = _button(settlement_screen, "Построить", Vector2(24, 985), Vector2(326, 112), _build_selected)
-	upgrade_button = _button(settlement_screen, "Улучшить", Vector2(367, 985), Vector2(329, 112), _upgrade_selected)
-	_button(settlement_screen, "Собрать ресурсы", Vector2(24, 1097), Vector2(326, 112), _mine)
-	settlement_return_button = _button(settlement_screen, "Главная", Vector2(367, 1097), Vector2(329, 112), _close_settlement)
+		var button := _button(settlement_screen, "", Vector2(24 + 229 * (i % 3), 838 + 96 * (i / 3 as int)), Vector2(214, 94), func(): _choose_kind(i), true)
+		building_choices.append(button)
+		_texture(button, key, Vector2(76, 3), Vector2(62, 54))
+		_label(button, BUILDING_NAMES[i], Vector2(1, 58), Vector2(212, 29), 16, GOLD, true)
+	build_button = _button(settlement_screen, "Построить", Vector2(24, 1034), Vector2(214, 82), _build_selected)
+	upgrade_button = _button(settlement_screen, "Улучшить", Vector2(253, 1034), Vector2(214, 82), _upgrade_selected)
+	_button(settlement_screen, "Бункер", Vector2(482, 1034), Vector2(214, 82), func(): _choose_slot(-1))
+	_button(settlement_screen, "Ускорить доставку", Vector2(24, 1122), Vector2(326, 82), _mine)
+	settlement_return_button = _button(settlement_screen, "Главная", Vector2(367, 1122), Vector2(329, 82), _close_settlement)
 	settlement_status = _label(settlement_screen, "", Vector2(32, 1211), Vector2(656, 50), 18, IVORY, true)
 	settlement_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
@@ -420,6 +435,7 @@ func _build_utility_modal() -> void:
 	utility_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	reduced_button = _button(utility_modal, "", Vector2(112, 551), Vector2(496, 112), func(): _toggle_setting("reduced_effects"))
 	haptics_button = _button(utility_modal, "", Vector2(112, 683), Vector2(496, 112), func(): _toggle_setting("haptics"))
+	sound_button = _button(utility_modal, "", Vector2(112, 797), Vector2(496, 74), func(): _toggle_setting("sound"))
 	_button(utility_modal, "Вернуться", Vector2(130, 873), Vector2(460, 112), _close_utility)
 
 
@@ -432,6 +448,7 @@ func _open_settings() -> void:
 	utility_body.size.y = 78
 	reduced_button.visible = true
 	haptics_button.visible = true
+	sound_button.visible = true
 	_refresh_settings()
 	utility_modal.visible = true
 
@@ -440,6 +457,8 @@ func _refresh_settings() -> void:
 	_set_button_text(reduced_button, "Эффекты: экономные" if bool(store.data.settings.reduced_effects) else "Эффекты: полные")
 	_set_button_text(haptics_button, "Вибрация: включена" if bool(store.data.settings.haptics) else "Вибрация: выключена")
 	fx_pool.configure(bool(store.data.settings.reduced_effects))
+	_set_button_text(sound_button, "Звук: включён" if bool(store.data.settings.sound) else "Звук: выключен")
+	audio.set_enabled(bool(store.data.settings.sound))
 
 
 func _toggle_setting(key: String) -> void:
@@ -462,6 +481,7 @@ func _open_help() -> void:
 	utility_title.text = "ПРАВИЛА РАЗЛОМА"
 	reduced_button.visible = false
 	haptics_button.visible = false
+	sound_button.visible = false
 	utility_body.size.y = 370
 	var state: Dictionary = engine.objective_state()
 	var rules := {
@@ -469,7 +489,8 @@ func _open_help() -> void:
 		"collect": "Собирайте кристаллы «%s»: засчитывается только этот цвет." % GEM_NAMES[int(state.get("color", 0))],
 		"seals": "Разрушьте все печати. Совпадения рядом с печатью снимают прочность; молнии и взрывы тоже помогают.",
 		"altars": "Зажгите все алтари: соберите совпадение на отмеченной клетке.",
-		"boss": "Победите хранителя. Его слабость: %s. Каждые три хода он накладывает новые ледяные печати." % GEM_NAMES[int(state.get("color", 0))],
+		"relic": "Проведите амулеты к выходам со стрелкой. Собирайте кристаллы под реликвией: она падает вниз, не участвует в совпадениях и не уничтожается усилителями.",
+		"boss": "Победите хранителя. Его слабость: %s. Каждые три хода он накладывает новые печати своего региона." % GEM_NAMES[int(state.get("color", 0))],
 	}
 	utility_body.text = String(rules.get(state.get("kind", "score"), rules.score)) + "\n\n3 в ряд — совпадение.\n4 — молния по линии.\nТ или L — взрыв вокруг бомбы.\n5 — звезда очищает цвет.\n\nМеняйте соседние кристаллы свайпом или двумя касаниями."
 	utility_modal.visible = true
@@ -536,8 +557,10 @@ func _load_level(number: int) -> void:
 		status_label.text = "Цитадель: +%d ходов, %d бонусов." % [int(bonuses.bonus_moves), int(bonuses.starting_specials)]
 	var shape := String(engine.level_data.get("shape", "Разлом"))
 	shape_label.text = _shape_name(shape)
+	if engine.level_data.objective.kind == "boss":
+		shape_label.text = "%s · %s" % [String(engine.level_data.boss.name), _shape_name(shape)]
 	level_label.text = "%s · разлом" % String(engine.level_data.get("region", "Проклятый лес"))
-	game_background.texture = Art.texture("forest_background")
+	game_background.texture = Art.texture(["forest_background", "ice_background", "lava_background"][int(engine.level_data.region_index)])
 	level_number.text = str(active_level)
 
 
@@ -571,7 +594,10 @@ func _render_board(board: Dictionary, blockers: Dictionary, falling: bool = fals
 		var data: Dictionary = board[cell]
 		var node: GemView = tile_nodes[cell]
 		var altar = altars.get(cell, null)
-		node.configure(data, blockers.get(cell, null), tile_size, null)
+		var seal: Variant = blockers.get(cell, null)
+		if seal != null and int(engine.level_data.region_index) > 0:
+			seal = {"hp": int(seal), "kind": "frost" if int(engine.level_data.region_index) == 1 else "lava"}
+		node.configure(data, seal, tile_size, null, cell in engine.level_data.get("relic_exits", []))
 		if altar != null:
 			node.gem_sprite.position = Vector2.ONE * tile_size * 0.125
 			node.gem_sprite.size = Vector2.ONE * tile_size * 0.75
@@ -618,7 +644,7 @@ func _update_hud(state: Dictionary = {}) -> void:
 	var kind := String(state.get("kind", "score"))
 	var current := int(state.get("current", 0))
 	var target := int(state.get("target", 1))
-	var titles := {"score": "Наберите очки", "collect": "Соберите: %s" % GEM_NAMES[int(state.get("color", 0))], "seals": "Разрушьте печати", "altars": "Зажгите алтари", "boss": "Здоровье хранителя"}
+	var titles := {"score": "Наберите очки", "collect": "Соберите: %s" % GEM_NAMES[int(state.get("color", 0))], "seals": "Разрушьте печати", "altars": "Зажгите алтари", "relic": "Проведите реликвии", "boss": "Здоровье хранителя"}
 	mission_description.text = String(titles.get(kind, titles.score))
 	var icon_key := "gem_%d" % int(state.get("color", 0))
 	if kind == "score":
@@ -627,8 +653,10 @@ func _update_hud(state: Dictionary = {}) -> void:
 		icon_key = "blocker_ice"
 	elif kind == "altars":
 		icon_key = "altar_lit"
+	elif kind == "relic":
+		icon_key = "relic"
 	elif kind == "boss":
-		icon_key = "boss_portrait"
+		icon_key = ["boss_portrait", "boss_ice", "boss_lava"][int(engine.level_data.region_index)]
 		current = int(state.get("boss_hp", 0))
 		target = int(state.get("boss_max_hp", 1))
 	mission_icon.texture = Art.texture(icon_key)
@@ -765,6 +793,7 @@ func _attempt_swap(a: Vector2i, b: Vector2i) -> void:
 			_show_home()
 		return
 	_vibrate(25)
+	audio.play("match")
 	for step: Dictionary in result.get("steps", []):
 		if generation != turn_generation:
 			return
@@ -777,7 +806,7 @@ func _attempt_swap(a: Vector2i, b: Vector2i) -> void:
 		score_label.text = str(step.get("score", engine.score))
 		var combo := int(step.get("combo", 1))
 		if not step.get("boss_attack", []).is_empty():
-			status_label.text = "Хранитель наложил ледяные печати!"
+			status_label.text = "Хранитель наложил новые печати!"
 		elif int(step.get("boss_damage", 0)) > 0:
 			status_label.text = "Хранитель: −%d здоровья" % int(step.boss_damage)
 		else:
@@ -800,9 +829,12 @@ func _attempt_swap(a: Vector2i, b: Vector2i) -> void:
 
 
 func _animate_step(step: Dictionary) -> void:
+	if int(step.get("combo", 1)) > 1:
+		audio.play("cascade")
 	for activation in step.get("activated", []):
 		var position_value: Vector2i = activation.get("position", Vector2i.ZERO)
 		var special := String(activation.get("special", "bomb"))
+		audio.play("lightning" if special in ["row", "column"] else "explosion")
 		if special == "row":
 			_spawn_fx("fx_lightning", Vector2(board_origin.x + board_size.x / 2, _cell_center(position_value).y), Vector2(board_size.x + 80, tile_size * 1.3))
 		elif special == "column":
@@ -814,10 +846,13 @@ func _animate_step(step: Dictionary) -> void:
 		var position_value: Vector2i = hit if hit is Vector2i else hit.get("position", Vector2i.ZERO)
 		_spawn_fx("fx_frost", _cell_center(position_value), Vector2.ONE * tile_size * 1.8)
 	var index := 0
-	var frequency := 6 if bool(store.data.settings.reduced_effects) else 3
+	var frequency := 3 if bool(store.data.settings.reduced_effects) else 1
+	var removed_colors: Dictionary = {}
+	for entry in step.get("removed_details", []):
+		removed_colors[entry.position] = int(entry.color)
 	for position_value: Vector2i in step.get("removed", []):
 		if index % frequency == 0:
-			_spawn_fx("fx_dust", _cell_center(position_value), Vector2.ONE * tile_size * 1.6, randf_range(-0.5, 0.5))
+			_spawn_fx("fx_shards_%d" % int(removed_colors.get(position_value, 0)), _cell_center(position_value), Vector2(tile_size * 1.7, tile_size * 0.76))
 		index += 1
 		if tile_nodes.has(position_value):
 			var node: Control = tile_nodes[position_value]
@@ -864,6 +899,10 @@ func _show_hint() -> void:
 		var result: Dictionary = simulation.try_swap(moves[index][0], moves[index][1])
 		var after: Dictionary = simulation.objective_state()
 		var metric: float = float(int(after.current) - int(state.current)) * 10000.0 + simulation.score - engine.score
+		if state.kind == "relic":
+			for position: Vector2i in simulation.cells:
+				if bool(simulation.cells[position].get("relic", false)):
+					metric += position.y * 200.0
 		metric -= maxi(0, simulation.blockers.size() - engine.blockers.size()) * 300.0
 		if bool(result.get("won", false)):
 			metric += 1000000.0
@@ -892,6 +931,8 @@ func _retry() -> void:
 
 func _show_result(won: bool) -> void:
 	end_won = won
+	if won and not reward_banked:
+		audio.play("victory")
 	if not reward_banked:
 		last_rewards = store.award_level(active_level, engine.score, won, engine.collected, entry_bonuses)
 		reward_banked = store.last_award_status != "save_failed"
@@ -980,6 +1021,7 @@ func _open_settlement() -> void:
 	home_screen.visible = false
 	game_screen.visible = false
 	settlement_screen.visible = true
+	settlement.stage_production()
 	_set_button_text(settlement_return_button, "Главная" if settlement_origin == "home" else "К кристаллам")
 	_update_settlement()
 
@@ -995,44 +1037,21 @@ func _update_settlement() -> void:
 	var resources: Dictionary = store.data.get("resources", {})
 	for i in range(3):
 		resource_labels[i].text = str(resources.get(["stone", "wood", "essence"][i], 0))
-	_clear_children(settlement_grid)
 	var buildings: Array = store.data.get("buildings", [])
 	var upgrades: Array = store.data.get("upgrades", [])
-	var building_layers: Array[Dictionary] = []
-	for slot in range(9):
-		var row := slot / 3
-		var column := slot % 3
-		var center := Vector2(360 + (column - row) * 99, 345 + (column + row) * 65)
-		var ground := TextureButton.new()
-		ground.texture_normal = Art.texture("ground")
-		ground.texture_pressed = ground.texture_normal
-		ground.texture_click_mask = _texture_hit_mask("ground")
-		ground.ignore_texture_size = true
-		ground.stretch_mode = TextureButton.STRETCH_SCALE
-		ground.position = center - Vector2(101, 57)
-		ground.size = Vector2(202, 114)
-		ground.pressed.connect(func(): _choose_slot(slot))
-		settlement_grid.add_child(ground)
-		if slot == selected_slot:
-			ground.modulate = Color(1.25, 1.13, 0.87)
-		var kind := int(buildings[slot]) if slot < buildings.size() else -1
-		if kind >= 0 and kind < BUILDING_KEYS.size():
-			var tier := int(upgrades[slot]) if slot < upgrades.size() else 0
-			building_layers.append({"slot": slot, "kind": kind, "center": center})
-			_label(ground, "I".repeat(maxi(1, tier + 1)), Vector2(59, 81), Vector2(85, 27), 15, GOLD, true)
-		else:
-			_texture(ground, "portal", Vector2(71, 27), Vector2(60, 60)).modulate = Color(0.65, 0.65, 0.74, 0.8)
-	for building in building_layers:
-		var key: String = BUILDING_KEYS[int(building.kind)]
-		var building_button := TextureButton.new()
-		building_button.texture_normal = Art.texture(key)
-		building_button.texture_click_mask = _texture_hit_mask(key)
-		building_button.ignore_texture_size = true
-		building_button.stretch_mode = TextureButton.STRETCH_SCALE
-		building_button.position = Vector2(building.center) - Vector2(71, 116)
-		building_button.size = Vector2(142, 149)
-		building_button.pressed.connect(func(): _choose_slot(int(building.slot)))
-		settlement_grid.add_child(building_button)
+	settlement_grid.refresh(store.data, selected_slot)
+	if selected_slot == -1:
+		var stage := int(store.data.bunker_level)
+		slot_title.text = "Бункер · %s" % SettlementModel.BUNKER_STAGES[stage]
+		var cost := settlement.bunker_cost()
+		slot_detail.text = "Следующий этап: %s\nЦена: %s" % [SettlementModel.BUNKER_STAGES[mini(3, stage + 1)], _cost_text(cost)] if stage < 3 else "Бункер завершён. +2 эссенции за первое прохождение (общий предел +4)."
+		build_button.disabled = cost.is_empty()
+		upgrade_button.disabled = true
+		_set_button_text(build_button, "Возвести этап")
+		build_button.modulate = Color(0.5, 0.5, 0.5) if build_button.disabled else Color.WHITE
+		upgrade_button.modulate = Color(0.5, 0.5, 0.5)
+		return
+	_set_button_text(build_button, "Построить")
 	var selected_building := int(buildings[selected_slot]) if selected_slot < buildings.size() else -1
 	build_button.disabled = selected_building >= 0
 	var selected_upgrade := int(upgrades[selected_slot]) if selected_slot < upgrades.size() else 0
@@ -1041,7 +1060,7 @@ func _update_settlement() -> void:
 	upgrade_button.modulate = Color(0.5, 0.5, 0.5) if upgrade_button.disabled else Color.WHITE
 	if selected_building < 0:
 		slot_title.text = "Участок %d · %s" % [selected_slot + 1, BUILDING_NAMES[selected_kind]]
-		var future_bonuses := ["+1 ход в каждом разломе.", "+1 ход и +5% к наградам.", "Спецкристалл в начале; +1 эссенция за победу.", "+1 урон боссу; +10% к наградам."]
+		var future_bonuses := ["+1 ход в каждом разломе.", "+1 ход и +5% к наградам.", "Спецкристалл в начале; +1 эссенция за победу.", "+1 урон боссу; +10% к наградам.", "Дополнительная бомба в начале каждой попытки.", "+1 урон печатям от совпадений и усилителей."]
 		slot_detail.text = "Цена: %s\n%s\nТакже добывает ресурсы для строительства." % [_cost_text(settlement.get_build_cost(selected_kind)), future_bonuses[selected_kind]]
 	else:
 		var tier := int(upgrades[selected_slot]) if selected_slot < upgrades.size() else 0
@@ -1052,7 +1071,7 @@ func _update_settlement() -> void:
 			if description.begins_with(BUILDING_NAMES[selected_building] + ":"):
 				battle_effect = description
 				break
-		slot_detail.text = "%s\n%s\nЗа минуту: %s" % [upgrade_text, battle_effect, _cost_text(settlement.production())]
+		slot_detail.text = "%s\n%s\nЗа минуту: %s" % [upgrade_text, battle_effect, _cost_text(settlement.production_for_slot(selected_slot))]
 	if settlement_status.text.is_empty():
 		settlement_status.text = "Побеждайте в разломах, стройте и собирайте добычу."
 
@@ -1088,6 +1107,8 @@ func _choose_slot(slot: int) -> void:
 
 
 func _choose_kind(kind: int) -> void:
+	if selected_slot < 0:
+		selected_slot = 4
 	selected_kind = kind
 	_update_settlement()
 
@@ -1099,8 +1120,8 @@ func _operation_ok(result) -> bool:
 
 
 func _build_selected() -> void:
-	var result = settlement.build(selected_slot, selected_kind)
-	settlement_status.text = "%s: бонусы со следующей попытки." % BUILDING_NAMES[selected_kind] if _operation_ok(result) else _operation_error(result)
+	var result = settlement.build_bunker() if selected_slot == -1 else settlement.build(selected_slot, selected_kind)
+	settlement_status.text = "%s: строительство сохранено." % ("Бункер" if selected_slot == -1 else BUILDING_NAMES[selected_kind]) if _operation_ok(result) else _operation_error(result)
 	_update_settlement()
 
 
@@ -1117,23 +1138,17 @@ func _operation_error(result) -> String:
 
 
 func _mine() -> void:
-	var result = settlement.mine()
-	if result is Dictionary and not bool(result.get("ok", false)):
-		settlement_status.text = String(result.get("reason", "Не удалось собрать добычу."))
-		_update_settlement()
-		return
-	var rewards: Dictionary = result if result is Dictionary else {}
-	if rewards.has("rewards"):
-		rewards = rewards.rewards
-	elif rewards.has("resources"):
-		rewards = rewards.resources
-	var total := int(rewards.get("stone", 0)) + int(rewards.get("wood", 0)) + int(rewards.get("essence", 0))
-	settlement_status.text = "Собрано: %s" % _cost_text(rewards) if total > 0 else "Добыча идёт. Вернитесь после следующего сражения."
+	settlement_grid.dispatch()
+	settlement_status.text = "Рабочие несут добычу на склад. Ресурсы зачисляются после доставки."
 	_update_settlement()
 
 
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_RESUMED and is_instance_valid(audio):
+		audio.set_paused(false)
 	if what == NOTIFICATION_APPLICATION_PAUSED:
+		if is_instance_valid(audio):
+			audio.set_paused(true)
 		_reset_pointer()
 		_clear_hint()
 		return
@@ -1245,6 +1260,9 @@ func _smoke() -> void:
 	if not await _smoke_objectives_and_pools(preview_dir):
 		get_tree().quit(1)
 		return
+	if not await _smoke_city_and_sound(preview_dir):
+		get_tree().quit(1)
+		return
 	print("UI_SMOKE_OK")
 	get_tree().quit()
 
@@ -1276,6 +1294,68 @@ func _smoke_frames() -> bool:
 	return true
 
 
+func _smoke_city_and_sound(preview_dir: String) -> bool:
+	_notification(NOTIFICATION_APPLICATION_RESUMED)
+	_open_settings()
+	var sound_before := bool(store.data.settings.sound)
+	await _smoke_press_control(sound_button)
+	if bool(store.data.settings.sound) == sound_before or audio.enabled != bool(store.data.settings.sound):
+		push_error("UI_SMOKE_SOUND_TOUCH_FAILED")
+		return false
+	await _smoke_press_control(sound_button)
+	_close_utility()
+	_open_settlement()
+	var before_data := store.data.duplicate(true)
+	var before_bonuses := entry_bonuses.duplicate(true)
+	store.data.resources = {"stone": 100000, "wood": 100000, "essence": 100000}
+	for kind in range(BUILDING_KEYS.size()):
+		selected_slot = kind
+		store.data.buildings[kind] = -1
+		_update_settlement()
+		await _smoke_press_control(building_choices[kind])
+		if selected_kind != kind:
+			push_error("UI_SMOKE_BUILDING_CHOICE_FAILED")
+			return false
+		await _smoke_press_control(build_button)
+		if int(store.data.buildings[kind]) != kind:
+			push_error("UI_SMOKE_BUILDING_TOUCH_FAILED")
+			return false
+		var artwork: TextureButton = settlement_grid.site_buttons[kind]
+		selected_slot = 8
+		await _smoke_press_control(artwork, Vector2(0.5, 0.78))
+		if selected_slot != kind:
+			push_error("UI_SMOKE_BUILDING_ALPHA_TOUCH_FAILED")
+			return false
+	if entry_bonuses != before_bonuses:
+		push_error("UI_SMOKE_BUILDING_CHANGED_ACTIVE_ATTEMPT")
+		return false
+	store.data.colony_pending = {"stone": 72, "wood": 48, "essence": 24}
+	var delivered_before := settlement_grid.transported
+	for tick in range(240):
+		settlement_grid._process(0.2)
+		if tick % 12 == 0:
+			await get_tree().process_frame
+	if settlement_grid.transported <= delivered_before:
+		push_error("UI_SMOKE_WORKER_DELIVERY_FAILED")
+		return false
+	await _capture_preview(preview_dir.path_join("settlement_built.png"))
+	_choose_slot(-1)
+	for stage in range(1, 4):
+		await _smoke_press_control(build_button)
+		if int(store.data.bunker_level) != stage:
+			push_error("UI_SMOKE_BUNKER_STAGE_FAILED")
+			return false
+		await _capture_preview(preview_dir.path_join("bunker_%d.png" % stage))
+	store.data = before_data
+	store.save_progress()
+	_update_settlement()
+	_close_settlement()
+	audio.set_enabled(false)
+	await get_tree().create_timer(0.3).timeout
+	print("UI_SMOKE_CITY_AUDIO_OK six_buildings=true native_selection=true alpha_hits=true sound_persisted=true")
+	return true
+
+
 func _capture_preview(path: String) -> void:
 	if DisplayServer.get_name() == "headless":
 		await get_tree().process_frame
@@ -1284,8 +1364,8 @@ func _capture_preview(path: String) -> void:
 	get_viewport().get_texture().get_image().save_png(path)
 
 
-func _smoke_press_control(control: Control) -> void:
-	var canvas_point := control.global_position + control.size * 0.5
+func _smoke_press_control(control: Control, fraction: Vector2 = Vector2(0.5, 0.5)) -> void:
+	var canvas_point := control.global_position + control.size * fraction
 	var point := get_viewport().get_final_transform() * get_global_transform_with_canvas() * canvas_point
 	for pressed in [true, false]:
 		var event := InputEventMouseButton.new()
@@ -1423,10 +1503,10 @@ func _smoke_objectives_and_pools(preview_dir: String) -> bool:
 	_close_utility()
 	_load_level(6)
 	await _capture_preview(preview_dir.path_join("board_ring.png"))
-	for number in [2, 3, 4, 10]:
+	for number in [2, 3, 4, 5, 10, 30, 50]:
 		_load_level(number)
 		var kind: String = engine.objective_state().kind
-		await _capture_preview(preview_dir.path_join("mission_%s.png" % kind))
+		await _capture_preview(preview_dir.path_join("mission_%s%s.png" % [kind, "_ice" if number == 30 else "_lava" if number == 50 else ""]))
 		if number in [2, 3]:
 			await _capture_preview(preview_dir.path_join("board_%s.png" % String(engine.level_data.shape)))
 		var turns := 3 if number == 10 else 1
@@ -1450,8 +1530,8 @@ func _smoke_objectives_and_pools(preview_dir: String) -> bool:
 			if busy or engine.moves != before - 1:
 				push_error("UI_SMOKE_OBJECTIVE_INPUT_FAILED: " + kind)
 				return false
-		if number == 10:
-			await _capture_preview(preview_dir.path_join("boss.png"))
+		if number in [10, 30, 50]:
+			await _capture_preview(preview_dir.path_join("boss%s.png" % ("" if number == 10 else "_ice" if number == 30 else "_lava")))
 		_open_help()
 		await _capture_preview(preview_dir.path_join("help_%s.png" % kind))
 		_close_utility()

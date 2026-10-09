@@ -2,7 +2,7 @@ class_name SettlementModel
 extends RefCounted
 ## Nine-slot outpost; production accrues in whole minutes, capped at eight offline hours.
 
-const TITLES := ["Каменоломня", "Лесопилка", "Святилище", "Крепость"]
+const TITLES := ["Каменоломня", "Лесопилка", "Святилище", "Крепость", "Кузница", "Башня"]
 const RESOURCE_KEYS := ["stone", "wood", "essence"]
 const MINE_INTERVAL := 60
 const OFFLINE_CAP := 8 * 60 * 60
@@ -13,7 +13,15 @@ const BUILD_COSTS := [
 	{"stone": 60, "wood": 45, "essence": 10},
 	{"stone": 80, "wood": 65, "essence": 20},
 	{"stone": 160, "wood": 140, "essence": 75},
+	{"stone": 90, "wood": 80, "essence": 30},
+	{"stone": 120, "wood": 70, "essence": 40},
 ]
+const BUNKER_COSTS := [
+	{"stone": 120, "wood": 80, "essence": 20},
+	{"stone": 220, "wood": 130, "essence": 35},
+	{"stone": 360, "wood": 180, "essence": 60},
+]
+const BUNKER_STAGES := ["Разметка участка", "Фундамент", "Стены и перекрытия", "Укреплённый бункер"]
 
 var store: ProgressStore
 
@@ -58,6 +66,10 @@ func build(slot: int, kind: int) -> Dictionary:
 	_pay(cost)
 	store.data["buildings"][slot] = kind
 	store.data["upgrades"][slot] = 0
+	if bool(store.data.get("colony_mode", false)):
+		var initial_ore := production_for_slot(slot)
+		for resource in RESOURCE_KEYS:
+			store.data.colony_pending[resource] = mini(MAX_RESOURCE, int(store.data.colony_pending[resource]) + int(initial_ore[resource]))
 	# New capacity starts now, never retroactively producing before construction.
 	store.data["last_mine_time"] = now
 	if not store.save_progress():
@@ -92,19 +104,67 @@ func production() -> Dictionary:
 	if store == null:
 		return output
 	for slot in range(9):
-		var tier := int(store.data["upgrades"][slot]) + 1
-		match int(store.data["buildings"][slot]):
-			0:
-				output["stone"] += 8 * tier
-			1:
-				output["wood"] += 7 * tier
-			2:
-				output["essence"] += 3 * tier
-			3:
-				output["stone"] += 3 * tier
-				output["wood"] += 3 * tier
-				output["essence"] += 2 * tier
+		var site := production_for_slot(slot)
+		for resource in RESOURCE_KEYS:
+			output[resource] += int(site[resource])
 	return output
+
+func production_for_slot(slot: int) -> Dictionary:
+	var output := {"stone": 0, "wood": 0, "essence": 0}
+	if not _valid_slot(slot):
+		return output
+	var tier := int(store.data.upgrades[slot]) + 1
+	var rates := [Vector3i(8, 0, 0), Vector3i(0, 7, 0), Vector3i(0, 0, 3), Vector3i(3, 3, 2), Vector3i(5, 0, 0), Vector3i(0, 0, 2)]
+	var kind := int(store.data.buildings[slot])
+	if kind >= 0 and kind < rates.size():
+		for index in range(3):
+			output[RESOURCE_KEYS[index]] = rates[kind][index] * tier
+	return output
+
+func stage_production() -> bool:
+	var before := store.data.duplicate(true)
+	store.data.colony_mode = true
+	_accrue(int(Time.get_unix_time_from_system()))
+	if store.data == before:
+		return true
+	if not store.save_progress():
+		store.data = before
+		return false
+	return true
+
+func deliver_cargo(resource: String, requested: int) -> Dictionary:
+	if resource not in RESOURCE_KEYS or requested <= 0:
+		return _failure("Пустой груз.", {})
+	var before := store.data.duplicate(true)
+	var amount := mini(requested, mini(int(store.data.colony_pending.get(resource, 0)), MAX_RESOURCE - int(store.data.resources[resource])))
+	if amount <= 0:
+		return _failure("Склад заполнен или руда ещё не добыта.", {})
+	store.data.colony_pending[resource] -= amount
+	store.data.resources[resource] += amount
+	if not store.save_progress():
+		store.data = before
+		return _failure(store.last_error, {})
+	return {"ok": true, "resource": resource, "amount": amount}
+
+func bunker_cost() -> Dictionary:
+	var level := int(store.data.get("bunker_level", 0))
+	return BUNKER_COSTS[level].duplicate() if level < BUNKER_COSTS.size() else {}
+
+func build_bunker() -> Dictionary:
+	var cost := bunker_cost()
+	if cost.is_empty():
+		return _failure("Бункер полностью построен.", {})
+	var before := store.data.duplicate(true)
+	_accrue(int(Time.get_unix_time_from_system()))
+	if not _can_pay(cost):
+		store.data = before
+		return _failure("Недостаточно ресурсов на складе для следующего этапа.", cost)
+	_pay(cost)
+	store.data.bunker_level += 1
+	if not store.save_progress():
+		store.data = before
+		return _failure(store.last_error, cost)
+	return {"ok": true, "reason": BUNKER_STAGES[int(store.data.bunker_level)] + " построен.", "cost": cost}
 
 
 func battle_bonuses() -> Dictionary:
@@ -114,6 +174,8 @@ func battle_bonuses() -> Dictionary:
 		"boss_damage_bonus": 0,
 		"reward_percent": 0,
 		"essence_boost": 0,
+		"forge_bomb": 0,
+		"seal_damage_bonus": 0,
 	}
 	var tiers := _strongest_tiers()
 	if tiers[0] >= 0:
@@ -127,7 +189,13 @@ func battle_bonuses() -> Dictionary:
 	if tiers[3] >= 0:
 		output["boss_damage_bonus"] = 1 + int(tiers[3] >= 2)
 		output["reward_percent"] += 10 + tiers[3] * 5
+	if tiers[4] >= 0:
+		output["forge_bomb"] = 1
+	if tiers[5] >= 0:
+		output["seal_damage_bonus"] = 1
 	output["bonus_moves"] = mini(3, int(output["bonus_moves"]))
+	if int(store.data.get("bunker_level", 0)) >= 2:
+		output["essence_boost"] = mini(ProgressStore.MAX_ESSENCE_BOOST, int(output["essence_boost"]) + int(store.data.bunker_level) - 1)
 	output["reward_percent"] = mini(ProgressStore.MAX_REWARD_PERCENT, int(output["reward_percent"]))
 	return output
 
@@ -144,6 +212,12 @@ func bonus_descriptions() -> Array[String]:
 		descriptions.append("Святилище: спецкристаллы в начале — %d; эссенция за победу +%d." % [1 + int(tiers[2] >= 2), tiers[2] + 1])
 	if tiers[3] >= 0:
 		descriptions.append("Крепость: +%d урона боссам и +%d%% к наградам." % [1 + int(tiers[3] >= 2), 10 + tiers[3] * 5])
+	if tiers[4] >= 0:
+		descriptions.append("Кузница: дополнительная бомба в начале каждой попытки.")
+	if tiers[5] >= 0:
+		descriptions.append("Башня: +1 урон печатям от совпадений и усилителей.")
+	if int(store.data.get("bunker_level", 0)) >= 2:
+		descriptions.append("Бункер: дополнительная эссенция за первое прохождение.")
 	if descriptions.is_empty():
 		descriptions.append("Постройте здания, чтобы усилить походы в разломы.")
 	elif tiers[1] >= 0 and tiers[3] >= 0:
@@ -155,6 +229,8 @@ func mine() -> Dictionary:
 	var empty := {"stone": 0, "wood": 0, "essence": 0}
 	if store == null:
 		return {"ok": false, "reason": "Поселение ещё не загружено.", "rewards": empty}
+	if bool(store.data.get("colony_mode", false)):
+		return {"ok": stage_production(), "reason": "Рабочие доставят добытую руду на склад.", "rewards": empty}
 	var output := production()
 	if int(output["stone"]) + int(output["wood"]) + int(output["essence"]) == 0:
 		return {"ok": false, "reason": "Постройте первое добывающее здание.", "rewards": empty}
@@ -195,6 +271,12 @@ func _accrue(now: int) -> Dictionary:
 		return rewards
 	var output := production()
 	for resource in RESOURCE_KEYS:
+		if bool(store.data.get("colony_mode", false)):
+			var pending := int(store.data.colony_pending[resource])
+			var next_pending := mini(MAX_RESOURCE, pending + int(output[resource]) * cycles)
+			rewards[resource] = next_pending - pending
+			store.data.colony_pending[resource] = next_pending
+			continue
 		var previous := int(store.data["resources"][resource])
 		var next := mini(MAX_RESOURCE, previous + int(output[resource]) * cycles)
 		rewards[resource] = next - previous
@@ -210,7 +292,7 @@ func _valid_slot(slot: int) -> bool:
 
 func _strongest_tiers() -> Array[int]:
 	# Duplicate buildings increase production, but only the strongest of each kind aids battle.
-	var tiers: Array[int] = [-1, -1, -1, -1]
+	var tiers: Array[int] = [-1, -1, -1, -1, -1, -1]
 	if store == null:
 		return tiers
 	for slot in range(9):

@@ -23,6 +23,7 @@ var valid_turns := 0
 var bonuses: Dictionary = {}
 var _original_seals: Dictionary = {}
 var _seals_destroyed := 0
+var relics_delivered := 0
 
 func initialize(level: int, battle_bonuses: Dictionary = {}) -> void:
 	level_data = Generator.generate(level)
@@ -33,11 +34,14 @@ func initialize(level: int, battle_bonuses: Dictionary = {}) -> void:
 		"bonus_moves": _bounded_bonus(battle_bonuses.get("bonus_moves", 0), 3),
 		"starting_specials": _bounded_bonus(battle_bonuses.get("starting_specials", 0), 2),
 		"boss_damage_bonus": _bounded_bonus(battle_bonuses.get("boss_damage_bonus", 0), 2),
+		"forge_bomb": _bounded_bonus(battle_bonuses.get("forge_bomb", 0), 1),
+		"seal_damage_bonus": _bounded_bonus(battle_bonuses.get("seal_damage_bonus", 0), 1),
 	}
 	moves = int(level_data.moves) + int(bonuses.bonus_moves)
 	score = 0
 	valid_turns = 0
 	_seals_destroyed = 0
+	relics_delivered = 0
 	_original_seals = blockers.duplicate(true)
 	altars.clear()
 	for position in level_data.altars:
@@ -49,10 +53,17 @@ func initialize(level: int, battle_bonuses: Dictionary = {}) -> void:
 		collected[color] = 0
 	rng.seed = level_data.seed
 	_randomize_board(false)
+	for position in level_data.get("relics", []):
+		cells[position] = {"color": 0, "special": "", "relic": true}
+	if legal_moves().is_empty():
+		shuffle()
 	var candidates: Array = []
 	for position in cells:
 		if _open(position):
 			candidates.append(position)
+	if int(bonuses.forge_bomb) > 0 and not candidates.is_empty():
+		var forge_position: Vector2i = candidates.pop_at(rng.randi_range(0, candidates.size() - 1))
+		cells[forge_position].special = "bomb"
 	for index in range(int(bonuses.starting_specials)):
 		if candidates.is_empty():
 			break
@@ -92,9 +103,12 @@ func objective_state() -> Dictionary:
 				if charged:
 					current += 1
 			description = "Зарядите древние алтари"
+		"relic":
+			current = relics_delivered
+			description = "Проведите реликвии к нижним выходам"
 		"boss":
 			current = boss_max_hp - boss_hp
-			description = "Страж корней · уязвимость: " + COLOR_NAMES[color]
+			description = String(level_data.boss.get("name", "Хранитель")) + " · уязвимость: " + COLOR_NAMES[color]
 	var attack_every: int = int(level_data.get("boss", {}).get("attack_every", 3))
 	return {
 		"kind": kind, "current": current, "target": target,
@@ -103,6 +117,7 @@ func objective_state() -> Dictionary:
 		"attack_in": attack_every - valid_turns % attack_every if kind == "boss" and boss_hp > 0 else 0,
 		"altars": altars.duplicate(true), "turns": valid_turns,
 		"seals_destroyed": _seals_destroyed,
+		"relics_delivered": relics_delivered,
 	}
 
 func is_lost() -> bool:
@@ -129,12 +144,13 @@ func clone_model() -> RefCounted:
 	copy.bonuses = bonuses.duplicate(true)
 	copy._original_seals = _original_seals.duplicate(true)
 	copy._seals_destroyed = _seals_destroyed
+	copy.relics_delivered = relics_delivered
 	copy.rng.seed = rng.seed
 	copy.rng.state = rng.state
 	return copy
 
 func _open(position: Vector2i) -> bool:
-	return cells.has(position) and not blockers.has(position)
+	return cells.has(position) and not blockers.has(position) and not bool(cells[position].get("relic", false))
 
 func _same_color(position: Vector2i, color: int) -> bool:
 	return _open(position) and int(cells[position].color) == color
@@ -361,7 +377,7 @@ func _resolve(groups: Array, special_positions: Array, nova_targets: Dictionary,
 				altar_hits[target_position] = true
 			if blockers.has(target_position):
 				direct_blockers[target_position] = true
-			elif cells.has(target_position) and not protected.has(target_position):
+			elif _open(target_position) and not protected.has(target_position):
 				removed[target_position] = true
 				if cells[target_position].special != "" and not seen.has(target_position):
 					pending.append(target_position)
@@ -373,7 +389,7 @@ func _resolve(groups: Array, special_positions: Array, nova_targets: Dictionary,
 				damaged[neighbor] = true
 	var blocker_hits: Array = []
 	for position in damaged:
-		blockers[position] -= 1
+		blockers[position] -= 1 + int(bonuses.get("seal_damage_bonus", 0))
 		blocker_hits.append(position)
 		if blockers[position] <= 0:
 			blockers.erase(position)
@@ -462,19 +478,31 @@ func _refill() -> void:
 				cells.erase(slot)
 			for index in range(segment.size() - 1, -1, -1):
 				cells[segment[index]] = survivors.pop_back() if not survivors.is_empty() else {"color": rng.randi_range(0, COLOR_COUNT - 1), "special": ""}
+			var exit_position: Vector2i = segment.back()
+			while exit_position in level_data.get("relic_exits", []) and bool(cells[exit_position].get("relic", false)):
+				relics_delivered += 1
+				for index in range(segment.size() - 1, 0, -1):
+					cells[segment[index]] = cells[segment[index - 1]]
+				cells[segment[0]] = {"color": rng.randi_range(0, COLOR_COUNT - 1), "special": ""}
 
 func shuffle() -> void:
 	_randomize_board(true)
 
 func _randomize_board(preserve_specials: bool) -> void:
 	var specials: Dictionary = {}
+	var relic_positions: Dictionary = {}
 	if preserve_specials:
 		for position in cells:
+			if bool(cells[position].get("relic", false)):
+				relic_positions[position] = true
 			if cells[position].special != "":
 				specials[position] = cells[position].special
 	for _attempt in range(128):
 		cells.clear()
 		for position in level_data.mask:
+			if relic_positions.has(position):
+				cells[position] = {"color": 0, "special": "", "relic": true}
+				continue
 			var available: Array = range(COLOR_COUNT)
 			for axis in [Vector2i.LEFT, Vector2i.UP]:
 				var previous: Vector2i = position + axis

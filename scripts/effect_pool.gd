@@ -4,9 +4,9 @@ extends Control
 
 const FULL_CAPACITY := 24
 const REDUCED_CAPACITY := 8
-const FRAME_COUNT := 4
+const FRAME_COUNT := 8
 const DURATION := 0.4
-const PREFIXES := ["fx_explosion", "fx_lightning", "fx_frost", "fx_dust"]
+const PREFIXES := ["fx_explosion", "fx_lightning", "fx_frost", "fx_dust", "fx_shards_0", "fx_shards_1", "fx_shards_2", "fx_shards_3", "fx_shards_4", "fx_shards_5"]
 
 var _sprites: Array[TextureRect] = []
 var _frames: Dictionary = {}
@@ -29,7 +29,7 @@ func configure(reduced: bool) -> void:
 		if _frames.has(prefix):
 			continue
 		var textures: Array[Texture2D] = []
-		for frame in FRAME_COUNT:
+		for frame in (4 if prefix.begins_with("fx_shards_") else FRAME_COUNT):
 			textures.append(Art.texture(prefix + "_%d" % frame))
 		_frames[prefix] = textures
 	# Warm every slot even if startup uses reduced effects. Quality changes never
@@ -83,14 +83,16 @@ func _process(delta: float) -> void:
 		if _running[index] == 0:
 			continue
 		_ages[index] += maxf(0.0, delta)
-		var progress := minf(1.0, _ages[index] / DURATION)
+		var prefix: String = PREFIXES[_effect_kinds[index]]
+		var progress := minf(1.0, _ages[index] / (0.25 if prefix.begins_with("fx_shards_") else DURATION))
 		var sprite := _sprites[index]
 		if progress >= 1.0:
 			_running[index] = 0
 			sprite.visible = false
 			_active -= 1
 			continue
-		var frame := mini(FRAME_COUNT - 1, int(progress * FRAME_COUNT))
+		var count: int = _frames[prefix].size()
+		var frame := mini(count - 1, int(progress * count))
 		if frame != _frame_indices[index]:
 			sprite.texture = _frames[PREFIXES[_effect_kinds[index]]][frame]
 			_frame_indices[index] = frame

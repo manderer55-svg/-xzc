@@ -14,6 +14,10 @@ const BUILDING_NAMES := ["ground", "quarry", "sawmill", "shrine", "fortress",
 	"stone", "wood", "essence", "settlement_portal"]
 const POWER_NAMES := ["special_row", "special_column", "special_bomb", "special_nova"]
 const CAMPAIGN_NAMES := ["boss_portrait", "altar", "altar_lit", "forest_badge"]
+const REGIONAL_NAMES := ["boss_ice", "boss_lava", "blocker_frost", "blocker_lava", "relic", "relic_exit"]
+const REGIONAL_REGIONS := [Rect2(0, 0, 512, 590), Rect2(512, 0, 512, 590),
+	Rect2(60, 590, 420, 410), Rect2(545, 590, 440, 410),
+	Rect2(10, 1005, 502, 500), Rect2(530, 1005, 480, 500)]
 const SEAL_NAMES := ["blocker_stone", "blocker_ice", "selection", "coin"]
 const FRAME_REGIONS := [Rect2(72, 93, 525, 496), Rect2(659, 93, 525, 496),
 	Rect2(73, 665, 525, 497), Rect2(659, 665, 525, 497)]
@@ -33,34 +37,59 @@ static func texture(asset_name: String) -> Texture2D:
 	if _cache.has(asset_name):
 		return _cache[asset_name]
 	var result: Texture2D
-	if asset_name in ["background", "settlement_background", "icon", "board_frame", "forest_background", "home_background"]:
+	if asset_name == "settlement_background":
+		result = load(ROOT + "colony_terrain.png") as Texture2D
+	elif asset_name == "ore_site":
+		result = _grid_region("mine_structures", 0, 3, 3)
+	elif asset_name == "warehouse":
+		result = _grid_region("mine_structures", 7, 3, 3)
+	elif asset_name.begins_with("bunker_"):
+		result = _grid_region("bunker_stages", clampi(int(asset_name.trim_prefix("bunker_")), 0, 3), 2, 2)
+	elif asset_name.begins_with("worker_"):
+		var parts := asset_name.split("_")
+		var index := int(parts[1]) * 8 + int(parts[2])
+		var region := _grid_region("colony_workers", index, 8, 5)
+		region.region = region.region.grow(-4)
+		result = region
+	elif asset_name in ["background", "icon", "board_frame", "forest_background", "home_background", "ice_background", "lava_background"]:
 		result = load(ROOT + asset_name + ".png") as Texture2D
 	elif asset_name.begins_with("gem_") and asset_name.trim_prefix("gem_").is_valid_int():
-		var source := _atlas("gems_clean")
+		var source := _atlas("gems_shapes")
 		var gem_index := int(asset_name.trim_prefix("gem_"))
 		var cell_size := source.get_size() / Vector2(3, 2)
 		var origin := Vector2(gem_index % 3, int(gem_index / 3)) * cell_size
 		var ratio := source.get_size() / Vector2(1536, 1024)
 		result = _region(source, Rect2(origin + GEM_REGION.position * ratio, GEM_REGION.size * ratio))
 	elif POWER_NAMES.has(asset_name):
-		result = _grid_region("powers_readable", POWER_NAMES.find(asset_name), 2, 2)
+		result = _grid_region("powers_clean", POWER_NAMES.find(asset_name), 2, 2)
+	elif REGIONAL_NAMES.has(asset_name):
+		result = _region(_atlas("regional_objects"), REGIONAL_REGIONS[REGIONAL_NAMES.find(asset_name)])
+	elif asset_name in ["forge", "watchtower"]:
+		result = _grid_region("mine_structures", 5 if asset_name == "forge" else 6, 3, 3)
 	elif CAMPAIGN_NAMES.has(asset_name):
-		result = _grid_region("campaign", CAMPAIGN_NAMES.find(asset_name), 2, 2)
+		result = _grid_region("campaign_clean", CAMPAIGN_NAMES.find(asset_name), 2, 2)
 	elif SEAL_NAMES.has(asset_name):
 		result = _grid_region("seals_clean", SEAL_NAMES.find(asset_name), 2, 2)
 	elif FRAME_KEYS.has(asset_name):
 		result = _region(_atlas("ui_nine_slice"), FRAME_REGIONS[int(FRAME_KEYS[asset_name])])
 	elif asset_name == "ui_progress_fill":
 		result = _region(_atlas("ui_nine_slice"), Rect2(140, 730, 400, 130))
+	elif asset_name == "portal":
+		result = _grid_region("settlement_clean", 8, 3, 3)
 	elif GEM_NAMES.has(asset_name):
 		result = _grid_region("gems", GEM_NAMES.find(asset_name), 4, 4)
 	elif BUILDING_NAMES.has(asset_name):
-		result = _grid_region("settlement", BUILDING_NAMES.find(asset_name), 3, 3)
+		var index := BUILDING_NAMES.find(asset_name)
+		result = _grid_region("mine_structures", index, 3, 3) if index <= 4 else _grid_region("settlement_clean", index, 3, 3)
+	elif asset_name.begins_with("fx_shards_"):
+		var parts := asset_name.split("_")
+		if parts.size() == 4:
+			result = _grid_region("shards_clean", int(parts[2]) * 4 + int(parts[3]), 4, 6)
 	elif asset_name.begins_with("fx_"):
 		var parts := asset_name.split("_")
 		var kinds := ["explosion", "lightning", "frost", "dust"]
 		if parts.size() == 3 and kinds.has(parts[1]):
-			result = _grid_region("effects", kinds.find(parts[1]) * 4 + int(parts[2]), 4, 4)
+			result = _grid_region("effects_clean", kinds.find(parts[1]) * 8 + int(parts[2]), 8, 4)
 	elif asset_name.begins_with("digit_"):
 		var source := _atlas("digits_clean")
 		var digit_index := int(asset_name.trim_prefix("digit_"))

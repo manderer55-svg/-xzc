@@ -53,7 +53,7 @@ func _test_gem_reuse() -> void:
 		_check(gem.altar_sprite.texture == Art.texture("altar_lit"), "lit altar texture reset during reuse %d" % iteration)
 		gem.configure({"color": 3, "special": ""}, null, 64.0, null)
 		_check(not gem.altar_sprite.visible, "old altar hidden during reuse %d" % iteration)
-	_check(gem.get_child_count() == 6, "gem reuse preserves six layers")
+	_check(gem.get_child_count() == 7, "gem reuse preserves seven layers")
 	_check(gem.get_child_count() == layer_ids.size(), "gem child count remains stable")
 	for index in mini(gem.get_child_count(), layer_ids.size()):
 		_check(gem.get_child(index).get_instance_id() == layer_ids[index], "gem layer %d retains node ID" % index)
@@ -78,7 +78,7 @@ func _test_effect_pool() -> void:
 		_check(pool.stats().active == 24, "full pool keeps 24 active effects in round %d" % round_index)
 		pool._process(0.11)
 		if pool.get_child_count() > 0:
-			_check(pool.get_child(0).texture == Art.texture("fx_explosion_1"), "effect frame advances in round %d" % round_index)
+			_check(pool.get_child(0).texture == Art.texture("fx_explosion_2"), "effect frame advances in round %d" % round_index)
 		else:
 			_check(false, "pool contains a sprite for frame advance")
 		pool._process(0.30)

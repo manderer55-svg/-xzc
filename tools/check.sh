@@ -9,4 +9,6 @@ bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_gene
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_generated_frame.gd
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_board_contour.gd
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_ui_pool.gd
+bash "$PROJECT_ROOT/tools/run_game.sh" --headless --audio-driver Dummy --script res://tests/test_content.gd
+bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_colony.gd
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --audio-driver Dummy -- --smoke

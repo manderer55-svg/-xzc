@@ -4,6 +4,8 @@ class_name LevelGenerator
 ## A level number is its complete recipe. No level files or finite level cap.
 const SHAPES := ["citadel", "diamond", "cross", "hourglass", "heart", "ring", "wings", "rune"]
 const REGION := "Проклятый лес"
+const REGIONS := ["Проклятый лес", "Ледяной некрополь", "Вулканические руины"]
+const BOSSES := ["Страж корней", "Владыка инея", "Обсидиановый титан"]
 
 static func generate(level: int) -> Dictionary:
 	level = maxi(1, level)
@@ -14,7 +16,8 @@ static func generate(level: int) -> Dictionary:
 	var height: int = 7 + ((level - 1) / (SHAPES.size() * 3) as int) % 3
 	var shape: String = SHAPES[(level - 1) % SHAPES.size()]
 	var chapter_stage: int = (level - 1) % 10
-	var kind: String = "boss" if chapter_stage == 9 else ["score", "collect", "seals", "altars"][chapter_stage % 4]
+	var region_index: int = ((level - 1) / 20 as int) % REGIONS.size()
+	var kind: String = "boss" if chapter_stage == 9 else ["score", "collect", "seals", "altars", "relic"][chapter_stage % 5]
 	var mask: Array[Vector2i] = []
 	var center := Vector2((width - 1) / 2.0, (height - 1) / 2.0)
 	for y in range(height):
@@ -59,6 +62,29 @@ static func generate(level: int) -> Dictionary:
 		var chosen: int = random.randi_range(0, candidate_cells.size() - 1)
 		var position: Vector2i = candidate_cells.pop_at(chosen)
 		blockers[position] = 2 if level >= 35 and random.randf() < 0.35 else 1
+		if region_index == 1:
+			blockers[position] = 2
+		elif region_index == 2:
+			blockers[position] = 3
+	var relic_positions: Array[Vector2i] = []
+	var relic_exits: Array[Vector2i] = []
+	if kind == "relic":
+		var lanes: Array[Dictionary] = []
+		for x in range(width):
+			var bottom := height - 1
+			while bottom >= 0 and Vector2i(x, bottom) not in mask:
+				bottom -= 1
+			var top := bottom
+			while top > 0 and Vector2i(x, top - 1) in mask:
+				top -= 1
+			if bottom - top >= 3:
+				lanes.append({"x": x, "top": top, "bottom": bottom})
+		while relic_positions.size() < (1 if level <= 60 else 2) and not lanes.is_empty():
+			var lane: Dictionary = lanes.pop_at(random.randi_range(0, lanes.size() - 1))
+			relic_positions.append(Vector2i(lane.x, maxi(int(lane.top), int(lane.bottom) - 3) if level <= 60 else int(lane.top)))
+			relic_exits.append(Vector2i(lane.x, lane.bottom))
+			for y in range(int(lane.top), int(lane.bottom) + 1):
+				blockers.erase(Vector2i(lane.x, y))
 	var altar_positions: Array[Vector2i] = []
 	if kind == "altars":
 		var altar_candidates: Array[Vector2i] = []
@@ -89,9 +115,10 @@ static func generate(level: int) -> Dictionary:
 		"collect": objective_target = 18 + mini(8, (level - 1) / 30)
 		"seals": objective_target = blockers.size()
 		"altars": objective_target = altar_positions.size()
+		"relic": objective_target = relic_positions.size()
 		"boss":
 			objective_target = 32 + mini(18, level / 20)
-			boss = {"name": "Страж корней", "hp": objective_target, "weak_color": objective_color, "attack_every": 3}
+			boss = {"name": BOSSES[region_index], "hp": objective_target, "weak_color": objective_color, "attack_every": 3}
 	return {
 		"level": level,
 		"width": width,
@@ -102,8 +129,11 @@ static func generate(level: int) -> Dictionary:
 		"seed": seed_value,
 		"shape": shape,
 		"blockers": blockers,
-		"region": REGION,
+		"region": REGIONS[region_index],
+		"region_index": region_index,
 		"objective": {"kind": kind, "target": objective_target, "color": objective_color},
 		"altars": altar_positions,
+		"relics": relic_positions,
+		"relic_exits": relic_exits,
 		"boss": boss,
 	}
