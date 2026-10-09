@@ -1,0 +1,61 @@
+{
+	"discarded_frames": 0,
+	"duration": 10.1239002267574,
+	"events": [
+		{
+			"keys": [
+				"tap"
+			],
+			"time": 0.7
+		},
+		{
+			"keys": [
+				"match"
+			],
+			"time": 1.3
+		},
+		{
+			"keys": [
+				"cascade"
+			],
+			"time": 2.2
+		},
+		{
+			"keys": [
+				"lightning",
+				"explosion",
+				"lightning",
+				"explosion",
+				"lightning",
+				"explosion",
+				"lightning",
+				"explosion"
+			],
+			"time": 3.0
+		},
+		{
+			"keys": [
+				"cascade",
+				"explosion",
+				"lightning"
+			],
+			"time": 3.8
+		},
+		{
+			"keys": [
+				"match"
+			],
+			"time": 5.1
+		},
+		{
+			"keys": [
+				"victory"
+			],
+			"time": 6.0
+		}
+	],
+	"frames": 446464,
+	"method": "Godot AudioEffectCapture on Master after the actual mix safety limiter",
+	"mix_rate": 44100,
+	"peak_dbfs": -10.6021026771009
+}

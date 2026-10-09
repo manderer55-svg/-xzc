@@ -1,0 +1,46 @@
+[
+  {
+    "at_seconds": 0.35,
+    "effect": "tap"
+  },
+  {
+    "at_seconds": 1.12,
+    "effect": "match"
+  },
+  {
+    "at_seconds": 2.35,
+    "effect": "match_2"
+  },
+  {
+    "at_seconds": 3.58,
+    "effect": "match_3"
+  },
+  {
+    "at_seconds": 4.81,
+    "effect": "cascade"
+  },
+  {
+    "at_seconds": 6.32,
+    "effect": "cascade_2"
+  },
+  {
+    "at_seconds": 7.83,
+    "effect": "lightning"
+  },
+  {
+    "at_seconds": 10.03,
+    "effect": "lightning_2"
+  },
+  {
+    "at_seconds": 12.23,
+    "effect": "explosion"
+  },
+  {
+    "at_seconds": 14.48,
+    "effect": "explosion_2"
+  },
+  {
+    "at_seconds": 16.73,
+    "effect": "victory"
+  }
+]

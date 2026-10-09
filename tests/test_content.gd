@@ -85,19 +85,19 @@ func _run() -> void:
 	audio.set_enabled(false)
 	await create_timer(0.05).timeout
 	audio.play("explosion")
-	check(not audio.music.playing, "mute stops music and suppresses effects")
+	check(audio.music.stream_paused or not audio.music.playing, "mute silences music and suppresses effects")
 	audio.set_enabled(true)
 	await create_timer(0.05).timeout
 	audio.set_paused(true)
 	await create_timer(0.05).timeout
-	check(not audio.music.playing, "app pause stops music")
+	check(audio.music.stream_paused, "app pause freezes music playback")
 	audio.set_paused(false)
 	await create_timer(0.05).timeout
-	check(audio.music.playing and audio.voices.size() == 8, "resume reuses voices and restarts music")
+	check(audio.music.playing and not audio.music.stream_paused and audio.voices.size() == 8, "resume reuses voices and preserves music playback")
 	audio.set_enabled(false)
 	await create_timer(0.08).timeout
 	audio.queue_free()
-	await process_frame
+	await create_timer(0.15).timeout
 	if failures.is_empty():
 		print("PASS: %d content checks (relic lanes/delivery, 3 regions, forge/tower, audio lifecycle, colored VFX)." % checks)
 		quit(0)

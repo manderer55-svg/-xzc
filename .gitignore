@@ -21,3 +21,7 @@ export_credentials.cfg
 Thumbs.db
 .idea/
 .vscode/
+
+# Python audio rendering cache
+__pycache__/
+*.pyc
