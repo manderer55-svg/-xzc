@@ -35,12 +35,12 @@ func _fixture(suffix: String, party: RefCounted = null) -> ExpeditionModel:
 
 
 func _until_phase(model: ExpeditionModel, phase: String) -> bool:
-	for index in range(500):
+	for index in range(2000):
 		if model.jobs().is_empty():
 			return false
 		if model.jobs()[0].phase == phase:
 			return true
-		model.advance(0.1)
+		model.advance(5.0 if phase == "returning" else 0.1)
 	return false
 
 
@@ -53,7 +53,7 @@ func _run() -> void:
 	for deposit: Dictionary in model.deposits():
 		var point := ExpeditionModel._cell(deposit.cell)
 		check(ExpeditionModel.field_walkable(point), "deposit sits on a clear reachable tile")
-		check(not seen.has(point) and deposit.remaining >= 60 and deposit.remaining <= 140, "unique finite deposit stock")
+		check(not seen.has(point) and deposit.remaining >= 3000 and deposit.remaining <= 6000, "unique finite deposit stock")
 		seen[point] = true
 		resources[deposit.resource] = true
 		check(not model._route(ExpeditionModel.FIELD_GATE_ACCESS, model._deposit_access(deposit)).is_empty(), "clear path from castle to every deposit")
@@ -98,9 +98,9 @@ func _run() -> void:
 	restored.advance(1.0)
 	check(restored.store.data.resources == delivered, "subsequent ticks cannot duplicate delivered cargo")
 	check(not restored.get_deposit(deposit_id).active, "mine remains absent until respawn timer")
-	restored.advance(61.0)
+	restored.advance(ExpeditionModel.RESPAWN_SECONDS)
 	check(restored.get_deposit(deposit_id).active and restored.get_deposit(deposit_id).cell != original_cell, "exhausted deposit respawns after delay at a different random map cell")
-	check(restored.get_deposit(deposit_id).remaining >= 60 and not restored._route(ExpeditionModel.FIELD_GATE_ACCESS, restored._deposit_access(restored.get_deposit(deposit_id))).is_empty(), "new deposit has finite stock and a reachable access")
+	check(restored.get_deposit(deposit_id).remaining >= 3000 and not restored._route(ExpeditionModel.FIELD_GATE_ACCESS, restored._deposit_access(restored.get_deposit(deposit_id))).is_empty(), "new deposit has finite stock and a reachable access")
 
 	var atomic := _fixture("atomic")
 	deposit_id = int(atomic.deposits()[0].id)
@@ -144,7 +144,7 @@ func _run() -> void:
 	previous_balance = int(boosted.store.data.resources[resource])
 	check(boosted.dispatch(deposit_id).ok and boosted.jobs()[0].troop_count == 3 and boosted.jobs()[0].hero_id == "warden", "dispatch snapshots a hero and three soldiers")
 	check(boosted.jobs()[0].yield_bonus == 25 and boosted.jobs()[0].damage_bonus == 20, "party skills are frozen for the active expedition")
-	boosted.advance(120.0)
+	boosted.advance(7200.0)
 	check(boosted.jobs().is_empty() and boosted.store.data.resources[resource] == previous_balance + 25, "hero bonus improves one delivered finite batch without increasing raw stock")
 	var supported := _fixture("city-bonuses")
 	for index in range(6):
@@ -161,7 +161,7 @@ func _run() -> void:
 	var ui_party_damage := supported_heroes.party_damage("warden", "infantry")
 	check(supported.dispatch(deposit_id).ok and supported.jobs()[0].yield_bonus == ui_yield and ui_yield == 32, "job yield equals combined hero UI skill with city contribution exactly once")
 	check(supported.jobs()[0].damage_bonus == ui_damage and supported.jobs()[0].party_damage == ui_party_damage and ui_party_damage == 39, "job strength equals combined hero UI party strength with city contribution exactly once")
-	supported.advance(120.0)
+	supported.advance(7200.0)
 	check(supported.store.data.resources[resource] == previous_balance + 26, "city and hero bonuses apply once to delivered cargo instead of creating passive stock")
 	var fallback := _fixture("city-fallback")
 	fallback.store.data.buildings[0] = 8
@@ -175,7 +175,7 @@ func _run() -> void:
 	full.get_deposit(deposit_id).remaining = 20
 	resource = str(full.get_deposit(deposit_id).resource)
 	full.store.data.resources[resource] = ProgressStore.MAX_RESOURCE - 3
-	check(full.dispatch(deposit_id).ok and full.advance(90.0).ok, "full warehouse expedition still returns")
+	check(full.dispatch(deposit_id).ok and full.advance(7200.0).ok, "full warehouse expedition still returns")
 	check(full.jobs().size() == 1 and full.jobs()[0].phase == "delivery_retry" and full.jobs()[0].cargo_amount == 17, "full warehouse preserves undelivered cargo and keeps its party reserved")
 	check(full.store.data.resources[resource] == ProgressStore.MAX_RESOURCE and not full.dispatch(int(full.deposits()[1].id)).ok, "warehouse cap cannot overflow or free a loaded queue")
 	full.store.data.resources[resource] -= 17
@@ -183,9 +183,9 @@ func _run() -> void:
 
 	var capacity := _fixture("capacity")
 	capacity.store.data.resources = {"stone": 100000, "wood": 100000, "essence": 100000}
-	check(capacity.settlement.build(0, 3).ok and capacity.queue_status().capacity == 1, "unupgraded castle retains one initial queue")
+	check(_complete_build(capacity.settlement, 0, 3).ok and capacity.queue_status().capacity == 1, "unupgraded castle retains one initial queue")
 	for tier in range(1, 4):
-		check(capacity.settlement.upgrade(0).ok and capacity.queue_status().capacity == tier + 1, "castle upgrade opens queue %d" % (tier + 1))
+		check(_complete_upgrade(capacity.settlement, 0).ok and capacity.queue_status().capacity == tier + 1, "castle upgrade opens queue %d" % (tier + 1))
 	for index in range(4):
 		check(capacity.dispatch(int(capacity.deposits()[index].id)).ok, "expanded castle can dispatch concurrent party %d" % index)
 	check(capacity.queue_status().busy == 4 and not capacity.dispatch(int(capacity.deposits()[4].id)).ok, "four queue limit is enforced")
@@ -211,7 +211,7 @@ func _run() -> void:
 	var restored_led := ExpeditionModel.new()
 	check(restored_led.configure(led_city, restored_heroes) and restored_heroes.hero_busy("warden") and restored_heroes.hero_busy("ranger") and restored_heroes.available_troops("infantry") == 14, "restored jobs keep both heroes and six soldiers reserved")
 	var army_total := int(led_store.data.army.infantry)
-	check(restored_led.advance(120.0).ok and restored_led.jobs().is_empty(), "both hero-led squads return independently")
+	check(restored_led.advance(7200.0).ok and restored_led.jobs().is_empty(), "both hero-led squads return independently")
 	check(not restored_heroes.hero_busy("warden") and not restored_heroes.hero_busy("ranger") and restored_heroes.available_troops("infantry") == army_total, "return releases existing soldiers without duplicating or consuming them")
 
 	var legacy_store := ProgressStore.new()
@@ -263,3 +263,24 @@ func _finish() -> void:
 		for failure in failures:
 			printerr("FAIL: " + failure)
 		quit(1)
+
+
+func _complete_build(model: SettlementModel, slot: int, kind: int) -> Dictionary:
+	var result := model.build(slot, kind)
+	if result.ok:
+		model.sync_construction(int(model.construction_job().ends_at))
+	return result
+
+
+func _complete_upgrade(model: SettlementModel, slot: int) -> Dictionary:
+	var result := model.upgrade(slot)
+	if result.ok:
+		model.sync_construction(int(model.construction_job().ends_at))
+	return result
+
+
+func _complete_build_bunker(model: SettlementModel) -> Dictionary:
+	var result := model.build_bunker()
+	if result.ok:
+		model.sync_construction(int(model.construction_job().ends_at))
+	return result

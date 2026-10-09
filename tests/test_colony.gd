@@ -15,7 +15,7 @@ func _run() -> void:
 	var model := SettlementModel.new()
 	model.configure(store)
 	check(model.stage_production() and store.data.colony_mode, "activate real hauling mode")
-	check(model.build(0, 0).ok and model.build(1, 0).ok, "build two mines")
+	check(_complete_build(model, 0, 0).ok and _complete_build(model, 1, 0).ok, "build two mines")
 	var before: Dictionary = store.data.resources.duplicate()
 	store.data.last_mine_time = int(Time.get_unix_time_from_system()) - 121
 	var pending := int(store.data.colony_pending.stone)
@@ -56,10 +56,10 @@ func _run() -> void:
 	check(world.transported > 0 and store.data.resources.stone > before.stone, "animated workers actually arrive with ore")
 	check(store.data.resources.stone - before.stone <= pending + 32, "shared ore reservations cannot duplicate cargo")
 	check(world.get_child_count() == children, "delivery reuses nodes")
-	check(model.build(ColonyMap.SLOT_COUNT - 1, 0).ok and model.production_for_slot(ColonyMap.SLOT_COUNT - 1).stone == 8, "expanded remote site contributes to real production")
+	check(_complete_build(model, ColonyMap.SLOT_COUNT - 1, 0).ok and model.production_for_slot(ColonyMap.SLOT_COUNT - 1).stone == 8, "expanded remote site contributes to real production")
 	var invalid_snapshot: Dictionary = store.data.duplicate(true)
-	check(not model.build(ColonyMap.SLOT_COUNT, 0).ok and store.data == invalid_snapshot, "outside construction index cannot charge the warehouse")
-	check(model.upgrade(0).ok and model.production_for_slot(0).stone == 16, "upgrade increases extraction")
+	check(not _complete_build(model, ColonyMap.SLOT_COUNT, 0).ok and store.data == invalid_snapshot, "outside construction index cannot charge the warehouse")
+	check(_complete_upgrade(model, 0).ok and model.production_for_slot(0).stone == 16, "upgrade increases extraction")
 	world.refresh(store.data, 0)
 	check(world.workers[0].tier == 2, "upgrade accelerates the existing worker")
 	var restored := ProgressStore.new()
@@ -70,10 +70,10 @@ func _run() -> void:
 	for stage in range(3):
 		var cost := model.bunker_cost()
 		var balance: Dictionary = store.data.resources.duplicate()
-		check(model.build_bunker().ok and store.data.bunker_level == stage + 1, "bunker stage %d" % stage)
+		check(_complete_build_bunker(model).ok and store.data.bunker_level == stage + 1, "bunker stage %d" % stage)
 		for resource in SettlementModel.RESOURCE_KEYS:
 			check(store.data.resources[resource] == balance[resource] - cost[resource], "bunker consumes delivered %s" % resource)
-	check(not model.build_bunker().ok, "finished bunker cannot charge again")
+	check(not _complete_build_bunker(model).ok, "finished bunker cannot charge again")
 	var cap_snapshot: Dictionary = store.data.duplicate(true)
 	store.data.resources.stone = ProgressStore.MAX_RESOURCE - 2
 	store.data.colony_pending.stone = 10
@@ -91,7 +91,7 @@ func _run() -> void:
 	check(not model.deliver_cargo("stone", 3).ok and store.data == snapshot, "failed delivery save rolls back both balances")
 	store.data.bunker_level = 0
 	snapshot = store.data.duplicate(true)
-	check(not model.build_bunker().ok and store.data == snapshot, "failed bunker save rolls back cost and stage")
+	check(not _complete_build_bunker(model).ok and store.data == snapshot, "failed bunker save rolls back cost and stage")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(blocked + ".tmp"))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(restored.path))
 	world.queue_free()
@@ -122,43 +122,43 @@ func _check_catalog() -> void:
 		var balance: Dictionary = store.data.resources.duplicate()
 		var pending: Dictionary = store.data.colony_pending.duplicate()
 		var cost := model.get_build_cost(kind)
-		check(model.build(kind, kind).ok and store.data.buildings[kind] == kind, "building %d is constructible" % kind)
+		check(_complete_build(model, kind, kind).ok and store.data.buildings[kind] == kind, "building %d is constructible" % kind)
 		for resource in SettlementModel.RESOURCE_KEYS:
 			check(store.data.resources[resource] == balance[resource] - cost[resource], "manual city build %d consumes only delivered %s" % [kind, resource])
 		check(store.data.colony_pending == pending, "manual city build %d never creates free passive ore" % kind)
 	check(model.expedition_capacity() == 1, "initial castle and town hall preserve one free expedition queue")
 	for tier in range(3):
-		check(model.upgrade(6).ok and model.expedition_capacity() == tier + 2, "town hall improvement unlocks queue %d" % (tier + 2))
-	check(model.build(16, 6).ok, "duplicate town hall can occupy a separate plot")
+		check(_complete_upgrade(model, 6).ok and model.expedition_capacity() == tier + 2, "town hall improvement unlocks queue %d" % (tier + 2))
+	check(_complete_build(model, 16, 6).ok, "duplicate town hall can occupy a separate plot")
 	for tier in range(3):
-		check(model.upgrade(16).ok, "duplicate town hall can be improved")
+		check(_complete_upgrade(model, 16).ok, "duplicate town hall can be improved")
 	check(model.expedition_capacity() == 4, "multiple town halls never stack more than four queues")
 	for kind in [7, 9]:
 		for tier in range(3):
-			check(model.upgrade(kind).ok, "new city perk building %d supports improvement" % kind)
+			check(_complete_upgrade(model, kind).ok, "new city perk building %d supports improvement" % kind)
 		var bonuses := model.battle_bonuses()
 		var duplicate_slot: int = 17 if kind == 7 else 18
-		check(model.build(duplicate_slot, kind).ok, "duplicate perk building %d is constructible" % kind)
+		check(_complete_build(model, duplicate_slot, kind).ok, "duplicate perk building %d is constructible" % kind)
 		for tier in range(3):
-			check(model.upgrade(duplicate_slot).ok, "duplicate perk building %d supports improvement" % kind)
+			check(_complete_upgrade(model, duplicate_slot).ok, "duplicate perk building %d supports improvement" % kind)
 		check(model.battle_bonuses() == bonuses, "only the strongest building %d contributes battle perks" % kind)
 	var bonuses := model.battle_bonuses()
 	check(bonuses.boss_damage_bonus > 0 and bonuses.boss_damage_bonus <= 2 and bonuses.reward_percent > 0 and bonuses.reward_percent <= ProgressStore.MAX_REWARD_PERCENT, "citadel damage and market rewards stay bounded")
 	for kind in [8, 14]:
 		for tier in range(3):
-			check(model.upgrade(kind).ok, "alliance support building %d supports improvement" % kind)
+			check(_complete_upgrade(model, kind).ok, "alliance support building %d supports improvement" % kind)
 	var expedition_bonuses := model.expedition_bonuses()
-	check(expedition_bonuses.yield_percent > 0 and expedition_bonuses.yield_percent <= 12 and expedition_bonuses.party_damage_percent <= 20, "city support cannot inflate finite expedition yield without bound")
+	check(expedition_bonuses.yield_percent > 0 and expedition_bonuses.yield_percent <= 60 and expedition_bonuses.party_damage_percent <= 20, "city support cannot inflate finite expedition yield without bound")
 	store.data.last_mine_time = int(Time.get_unix_time_from_system()) - 86400
 	var balance: Dictionary = store.data.resources.duplicate()
 	var pending: Dictionary = store.data.colony_pending.duplicate()
 	check(model.stage_production() and store.data.resources == balance and store.data.colony_pending == pending, "new field mode never accrues passive resources while time passes")
 	store.data.last_mine_time = int(Time.get_unix_time_from_system()) - 86400
 	var cost := model.bunker_cost()
-	check(model.build_bunker().ok and store.data.colony_pending == pending, "bunker construction creates no passive ore in field mode")
+	check(_complete_build_bunker(model).ok and store.data.colony_pending == pending, "bunker construction creates no passive ore in field mode")
 	for resource in SettlementModel.RESOURCE_KEYS:
 		check(store.data.resources[resource] == balance[resource] - cost[resource], "manual bunker consumes only its %s cost" % resource)
-	check(model.build(63, 14).ok, "last map site can hold a newly added building type")
+	check(_complete_build(model, 63, 14).ok, "last map site can hold a newly added building type")
 	var restored := ProgressStore.new()
 	restored.path = store.path
 	check(restored.load_progress() and restored.data.buildings.size() == 64 and restored.data.buildings[63] == 14, "all fifteen building types and the last construction site survive normalization")
@@ -237,3 +237,24 @@ func _check_camera(world: MineColony) -> void:
 	world.focus_home()
 	for index in range(world.workers.size()):
 		check(world.workers[index].node.position.is_equal_approx(original_positions[index]), "camera movement never changes worker %d ground position" % index)
+
+
+func _complete_build(model: SettlementModel, slot: int, kind: int) -> Dictionary:
+	var result := model.build(slot, kind)
+	if result.ok:
+		model.sync_construction(int(model.construction_job().ends_at))
+	return result
+
+
+func _complete_upgrade(model: SettlementModel, slot: int) -> Dictionary:
+	var result := model.upgrade(slot)
+	if result.ok:
+		model.sync_construction(int(model.construction_job().ends_at))
+	return result
+
+
+func _complete_build_bunker(model: SettlementModel) -> Dictionary:
+	var result := model.build_bunker()
+	if result.ok:
+		model.sync_construction(int(model.construction_job().ends_at))
+	return result

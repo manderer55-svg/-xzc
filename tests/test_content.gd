@@ -53,7 +53,7 @@ func _run() -> void:
 	progress.data.resources = {"stone": 100000, "wood": 100000, "essence": 100000}
 	var city := SettlementModel.new()
 	city.configure(progress)
-	check(city.build(0, 4).ok and city.build(1, 5).ok, "forge and tower can be built")
+	check(_complete_build(city, 0, 4).ok and _complete_build(city, 1, 5).ok, "forge and tower can be built")
 	check(city.battle_bonuses().forge_bomb == 1 and city.battle_bonuses().seal_damage_bonus == 1, "new buildings have useful battle effects")
 	model.initialize(30, city.battle_bonuses())
 	var bombs := 0
@@ -105,3 +105,24 @@ func _run() -> void:
 		for failure in failures:
 			printerr("FAIL: " + failure)
 		quit(1)
+
+
+func _complete_build(model: SettlementModel, slot: int, kind: int) -> Dictionary:
+	var result := model.build(slot, kind)
+	if result.ok:
+		model.sync_construction(int(model.construction_job().ends_at))
+	return result
+
+
+func _complete_upgrade(model: SettlementModel, slot: int) -> Dictionary:
+	var result := model.upgrade(slot)
+	if result.ok:
+		model.sync_construction(int(model.construction_job().ends_at))
+	return result
+
+
+func _complete_build_bunker(model: SettlementModel) -> Dictionary:
+	var result := model.build_bunker()
+	if result.ok:
+		model.sync_construction(int(model.construction_job().ends_at))
+	return result

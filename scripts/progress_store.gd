@@ -41,6 +41,7 @@ func defaults() -> Dictionary:
 		"resources": {"stone": 70, "wood": 50, "essence": 5},
 		"buildings": buildings,
 		"upgrades": upgrades,
+		"construction": [],
 		"banked_levels": {},
 		"last_mine_time": int(Time.get_unix_time_from_system()),
 		"settings": {"reduced_effects": false, "haptics": true, "sound": true},
@@ -205,7 +206,21 @@ func _normalize(value: Dictionary) -> Dictionary:
 	for slot in range(mini(SLOT_COUNT, buildings.size())):
 		result["buildings"][slot] = _number(buildings[slot], -1, 14, -1)
 		var tier: Variant = upgrades[slot] if slot < upgrades.size() else 0
-		result["upgrades"][slot] = _number(tier, 0, 3, 0) if result["buildings"][slot] >= 0 else 0
+		result["upgrades"][slot] = _number(tier, 0, 19, 0) if result["buildings"][slot] >= 0 else 0
+	var construction: Variant = value.get("construction", [])
+	if construction is Array and construction.size() == 1 and construction[0] is Dictionary:
+		var job: Dictionary = construction[0]
+		var slot := _number(job.get("slot", -2), -2, SLOT_COUNT - 1, -2)
+		var kind := _number(job.get("kind", -2), -2, 14, -2)
+		var level := _number(job.get("target_level", 0), 0, 20, 0)
+		var started := _number(job.get("started_at", 0), 0, 4000000000, 0)
+		var ends := _number(job.get("ends_at", 0), 0, 4000000000, 0)
+		var valid := slot == -1 and kind == -1 and level == int(result.bunker_level) + 1 and level <= 3
+		if slot >= 0:
+			valid = kind >= 0 and ((result.buildings[slot] == -1 and level == 1) or (result.buildings[slot] == kind and level == int(result.upgrades[slot]) + 2))
+		if valid and ends > started and ends - started <= 86400:
+			result.construction = [{"slot": slot, "kind": kind, "target_level": level, "started_at": started, "ends_at": ends}]
+
 	for key in value.get("best_scores", {}):
 		if str(key).is_valid_int() and int(key) >= 1 and int(key) <= MAX_LEVEL:
 			result["best_scores"][str(int(key))] = _number(value["best_scores"][key], 0, 10000000, 0)

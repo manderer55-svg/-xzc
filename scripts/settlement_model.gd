@@ -6,7 +6,7 @@ const TITLES := ["Каменоломня", "Лесопилка", "Святили
 const RESOURCE_KEYS := ["stone", "wood", "essence"]
 const MINE_INTERVAL := 60
 const OFFLINE_CAP := 8 * 60 * 60
-const MAX_UPGRADE := 3
+const MAX_UPGRADE := 19
 const MAX_RESOURCE := 1000000000
 const SLOT_COUNT := ColonyMap.SLOT_COUNT
 const BUILD_COSTS := [
@@ -27,20 +27,20 @@ const BUILD_COSTS := [
 	{"stone": 140, "wood": 110, "essence": 30},
 ]
 const BUILDING_DEFS := [
-	{"key": "quarry", "title": TITLES[0], "cost": BUILD_COSTS[0], "production": Vector3i(8, 0, 0), "description": "Каменоломня даёт дополнительный ход в разломах; третий уровень — ещё один."},
-	{"key": "sawmill", "title": TITLES[1], "cost": BUILD_COSTS[1], "production": Vector3i(0, 7, 0), "description": "Лесопилка даёт ход и повышает награды за первое прохождение."},
-	{"key": "shrine", "title": TITLES[2], "cost": BUILD_COSTS[2], "production": Vector3i(0, 0, 3), "description": "Святилище даёт стартовые усилители и дополнительную эссенцию за победу."},
-	{"key": "fortress", "title": TITLES[3], "cost": BUILD_COSTS[3], "production": Vector3i(3, 3, 2), "description": "Улучшайте замок, чтобы отправлять два, три или четыре отряда одновременно."},
-	{"key": "forge", "title": TITLES[4], "cost": BUILD_COSTS[4], "production": Vector3i(5, 0, 0), "description": "Кузница даёт стартовую бомбу в разломах и усиливает оружие отрядов."},
-	{"key": "watchtower", "title": TITLES[5], "cost": BUILD_COSTS[5], "production": Vector3i(0, 0, 2), "description": "Башня повышает урон печатям в разломах и помогает отрядам в походах."},
-	{"key": "townhall", "title": TITLES[6], "cost": BUILD_COSTS[6], "production": Vector3i.ZERO, "description": "Улучшенная ратуша открывает дополнительные очереди отрядов, максимум четыре."},
-	{"key": "citadel", "title": TITLES[7], "cost": BUILD_COSTS[7], "production": Vector3i.ZERO, "description": "Цитадель повышает силу отрядов; третий уровень усиливает удары по боссам разломов."},
+	{"key": "quarry", "title": TITLES[0], "cost": BUILD_COSTS[0], "production": Vector3i(8, 0, 0), "description": "Каменоломня ускоряет добычу камня с каждым уровнем и даёт дополнительные ходы матч-3."},
+	{"key": "sawmill", "title": TITLES[1], "cost": BUILD_COSTS[1], "production": Vector3i(0, 7, 0), "description": "Лесопилка ускоряет добычу дерева, даёт ход и повышает награды матч-3."},
+	{"key": "shrine", "title": TITLES[2], "cost": BUILD_COSTS[2], "production": Vector3i(0, 0, 3), "description": "Святилище ускоряет добычу эссенции и даёт усилители матч-3."},
+	{"key": "fortress", "title": TITLES[3], "cost": BUILD_COSTS[3], "production": Vector3i(3, 3, 2), "description": "Замок открывает до четырёх очередей; каждый следующий уровень ускоряет походы."},
+	{"key": "forge", "title": TITLES[4], "cost": BUILD_COSTS[4], "production": Vector3i(5, 0, 0), "description": "Кузница ускоряет добычу инструментами, даёт бомбу матч-3 и усиливает оружие."},
+	{"key": "watchtower", "title": TITLES[5], "cost": BUILD_COSTS[5], "production": Vector3i(0, 0, 2), "description": "Башня ускоряет походы разведкой, усиливает отряды и урон печатям матч-3."},
+	{"key": "townhall", "title": TITLES[6], "cost": BUILD_COSTS[6], "production": Vector3i.ZERO, "description": "Ратуша открывает до четырёх очередей и сокращает время работ на 2% за уровень."},
+	{"key": "citadel", "title": TITLES[7], "cost": BUILD_COSTS[7], "production": Vector3i.ZERO, "description": "Цитадель ускоряет строительство, повышает силу отрядов и урон боссам матч-3."},
 	{"key": "alliance_hall", "title": TITLES[8], "cost": BUILD_COSTS[8], "production": Vector3i.ZERO, "description": "Зал альянса улучшает снабжение: отряды привозят больше ресурсов с месторождений."},
-	{"key": "market", "title": TITLES[9], "cost": BUILD_COSTS[9], "production": Vector3i.ZERO, "description": "Рынок повышает награды за первое прохождение разломов на 2% за уровень."},
-	{"key": "stable", "title": TITLES[10], "cost": BUILD_COSTS[10], "production": Vector3i.ZERO, "description": "Конюшня открывает конницу и обучение всадников за ресурсы со склада."},
-	{"key": "barracks", "title": TITLES[11], "cost": BUILD_COSTS[11], "production": Vector3i.ZERO, "description": "Казармы позволяют обучать пехоту за ресурсы со склада."},
-	{"key": "archery", "title": TITLES[12], "cost": BUILD_COSTS[12], "production": Vector3i.ZERO, "description": "Стрельбище открывает стрелков и позволяет пополнять их отряды."},
-	{"key": "tavern", "title": TITLES[13], "cost": BUILD_COSTS[13], "production": Vector3i.ZERO, "description": "В таверне открывайте героев за карты и покупайте сундуки с тремя картами."},
+	{"key": "market", "title": TITLES[9], "cost": BUILD_COSTS[9], "production": Vector3i.ZERO, "description": "Рынок снижает цену улучшений на 1% за уровень и повышает награды матч-3."},
+	{"key": "stable", "title": TITLES[10], "cost": BUILD_COSTS[10], "production": Vector3i.ZERO, "description": "Конюшня открывает конницу; каждый уровень ускоряет походы всех отрядов."},
+	{"key": "barracks", "title": TITLES[11], "cost": BUILD_COSTS[11], "production": Vector3i.ZERO, "description": "Казармы открывают обучение пехоты; уровни повышают её силу и скорость добычи."},
+	{"key": "archery", "title": TITLES[12], "cost": BUILD_COSTS[12], "production": Vector3i.ZERO, "description": "Стрельбище открывает стрелков; уровни повышают их силу и скорость добычи."},
+	{"key": "tavern", "title": TITLES[13], "cost": BUILD_COSTS[13], "production": Vector3i.ZERO, "description": "Таверна открывает героев и сундуки; следующие уровни снижают цену сундуков."},
 	{"key": "alliance_store", "title": TITLES[14], "cost": BUILD_COSTS[14], "production": Vector3i.ZERO, "description": "Склад альянса улучшает доставку и повышает количество привезённых ресурсов."},
 ]
 const BUNKER_COSTS := [
@@ -55,6 +55,7 @@ var store: ProgressStore
 
 func configure(progress_store: ProgressStore) -> void:
 	store = progress_store
+	sync_construction()
 
 
 func get_build_cost(kind: int) -> Dictionary:
@@ -78,9 +79,32 @@ func expedition_capacity() -> int:
 
 func expedition_bonuses() -> Dictionary:
 	return {
-		"yield_percent": mini(12, highest_building_level(8) * 2 + highest_building_level(14)),
-		"party_damage_percent": mini(20, highest_building_level(7) * 2 + highest_building_level(3) + highest_building_level(4) + highest_building_level(5)),
+		"yield_percent": mini(60, highest_building_level(8) * 2 + highest_building_level(14)),
+		"party_damage_percent": mini(100, highest_building_level(7) * 2 + highest_building_level(3) + highest_building_level(4) + highest_building_level(5)),
 	}
+
+
+func mining_batch(resource: String) -> int:
+	var kind := RESOURCE_KEYS.find(resource)
+	return 5 + maxi(0, highest_building_level(kind) - 1)
+
+
+func mining_seconds(troop_type: String) -> float:
+	var kind: int = {"infantry": 11, "archer": 12, "cavalry": 10}.get(troop_type, 11)
+	var discipline := maxi(0, highest_building_level(kind) - 1) * 0.02
+	var tools := highest_building_level(4) * 0.01
+	return 5.0 * maxf(0.4, 1.0 - discipline - tools)
+
+
+func march_seconds(troop_type: String) -> float:
+	var reduction := highest_building_level(3) * 0.0075 + highest_building_level(10) * 0.0125 + highest_building_level(5) * 0.005
+	if troop_type == "cavalry":
+		reduction += 0.15
+	return 1.5 * maxf(0.45, 1.0 - reduction)
+
+
+func work_seconds(level: int) -> int:
+	return maxi(60, ceili(construction_seconds(level) * (1.0 - highest_building_level(6) * 0.02 - highest_building_level(7) * 0.005)))
 
 
 func get_upgrade_cost(slot: int) -> Dictionary:
@@ -92,60 +116,88 @@ func get_upgrade_cost(slot: int) -> Dictionary:
 	var tier := clampi(int(store.data["upgrades"][slot]), 0, MAX_UPGRADE)
 	if tier >= MAX_UPGRADE:
 		return {}
-	var multiplier := tier + 2
-	return {
-		"stone": int(BUILD_COSTS[kind]["stone"]) * multiplier,
-		"wood": int(BUILD_COSTS[kind]["wood"]) * multiplier,
-		"essence": (int(BUILD_COSTS[kind]["essence"]) + 8) * multiplier,
-	}
+	var level := tier + 2
+	var multiplier := upgrade_multiplier(level)
+	var discount := 1.0 - highest_building_level(9) * 0.01
+	return {"stone": ceili(int(BUILD_COSTS[kind].stone) * multiplier * discount),
+		"wood": ceili(int(BUILD_COSTS[kind].wood) * multiplier * discount),
+		"essence": ceili((int(BUILD_COSTS[kind].essence) + 8) * multiplier * discount)}
+
+
+static func upgrade_multiplier(level: int) -> int:
+	var early := [1, 3, 12, 40, 100, 250]
+	return early[level - 1] if level <= 6 else ceili(250.0 * pow(1.4, level - 6))
+
+
+static func construction_seconds(level: int) -> int:
+	var early := [120, 600, 1200, 1800, 3600, 7200]
+	return early[level - 1] if level <= 6 else mini(86400, ceili(7200.0 * pow(1.35, level - 6)))
+
+
+func construction_job() -> Dictionary:
+	var jobs: Array = store.data.get("construction", [])
+	return jobs[0] if not jobs.is_empty() else {}
+
+
+func construction_remaining(now: int = -1) -> int:
+	var job := construction_job()
+	if job.is_empty():
+		return 0
+	return maxi(0, int(job.ends_at) - (int(Time.get_unix_time_from_system()) if now < 0 else now))
+
+
+func sync_construction(now: int = -1) -> bool:
+	var job := construction_job()
+	if job.is_empty() or construction_remaining(now) > 0:
+		return false
+	var before := store.data.duplicate(true)
+	var slot := int(job.slot)
+	if slot == -1:
+		store.data.bunker_level = int(job.target_level)
+	elif _valid_slot(slot):
+		store.data.buildings[slot] = int(job.kind)
+		store.data.upgrades[slot] = int(job.target_level) - 1
+	store.data.construction = []
+	if not store.save_progress():
+		store.data = before
+		return false
+	return true
+
+
+func _schedule(slot: int, kind: int, target_level: int, cost: Dictionary) -> Dictionary:
+	sync_construction()
+	if not construction_job().is_empty():
+		return _failure("Строители заняты. Дождитесь завершения текущей работы.", cost)
+	if not _can_pay(cost):
+		return _failure("Недостаточно ресурсов на складе.", cost)
+	var before := store.data.duplicate(true)
+	_pay(cost)
+	var now := int(Time.get_unix_time_from_system())
+	var duration := work_seconds(target_level)
+	store.data.construction = [{"slot": slot, "kind": kind, "target_level": target_level, "started_at": now, "ends_at": now + duration}]
+	if not store.save_progress():
+		store.data = before
+		return _failure(store.last_error, cost)
+	return {"ok": true, "reason": "Работы начались: %d минут. Продолжаются вне игры." % (duration / 60), "cost": cost, "duration": duration}
 
 
 func build(slot: int, kind: int) -> Dictionary:
+	sync_construction()
 	var cost := get_build_cost(kind)
 	if not _valid_slot(slot) or cost.is_empty():
 		return _failure("Неизвестный участок или здание.", cost)
-	if int(store.data["buildings"][slot]) >= 0:
+	if int(store.data.buildings[slot]) >= 0:
 		return _failure("На участке уже есть здание.", cost)
-	var before := store.data.duplicate(true)
-	var now := int(Time.get_unix_time_from_system())
-	_accrue(now)
-	if not _can_pay(cost):
-		store.data = before
-		return _failure("Недостаточно ресурсов. Пройдите уровни или соберите добычу.", cost)
-	_pay(cost)
-	store.data["buildings"][slot] = kind
-	store.data["upgrades"][slot] = 0
-	if bool(store.data.get("colony_mode", false)) and not bool(store.data.get("expedition_mode", false)):
-		var initial_ore := production_for_slot(slot)
-		for resource in RESOURCE_KEYS:
-			store.data.colony_pending[resource] = mini(MAX_RESOURCE, int(store.data.colony_pending[resource]) + int(initial_ore[resource]))
-	# New capacity starts now, never retroactively producing before construction.
-	store.data["last_mine_time"] = now
-	if not store.save_progress():
-		store.data = before
-		return _failure(store.last_error, cost)
-	return {"ok": true, "reason": "Здание «%s» построено." % TITLES[kind], "cost": cost}
+	return _schedule(slot, kind, 1, cost)
 
 
 func upgrade(slot: int) -> Dictionary:
-	if not _valid_slot(slot) or int(store.data["buildings"][slot]) < 0:
+	sync_construction()
+	if not _valid_slot(slot) or int(store.data.buildings[slot]) < 0:
 		return _failure("Выберите построенное здание.", {})
-	if int(store.data["upgrades"][slot]) >= MAX_UPGRADE:
+	if int(store.data.upgrades[slot]) >= MAX_UPGRADE:
 		return _failure("Достигнут максимальный уровень здания.", {})
-	var cost := get_upgrade_cost(slot)
-	var before := store.data.duplicate(true)
-	var now := int(Time.get_unix_time_from_system())
-	_accrue(now)
-	if not _can_pay(cost):
-		store.data = before
-		return _failure("Недостаточно ресурсов для улучшения.", cost)
-	_pay(cost)
-	store.data["upgrades"][slot] = int(store.data["upgrades"][slot]) + 1
-	store.data["last_mine_time"] = now
-	if not store.save_progress():
-		store.data = before
-		return _failure(store.last_error, cost)
-	return {"ok": true, "reason": "Здание улучшено. Добыча увеличена.", "cost": cost}
+	return _schedule(slot, int(store.data.buildings[slot]), int(store.data.upgrades[slot]) + 2, get_upgrade_cost(slot))
 
 
 func production() -> Dictionary:
@@ -200,20 +252,11 @@ func bunker_cost() -> Dictionary:
 	return BUNKER_COSTS[level].duplicate() if level < BUNKER_COSTS.size() else {}
 
 func build_bunker() -> Dictionary:
+	sync_construction()
 	var cost := bunker_cost()
 	if cost.is_empty():
 		return _failure("Бункер полностью построен.", {})
-	var before := store.data.duplicate(true)
-	_accrue(int(Time.get_unix_time_from_system()))
-	if not _can_pay(cost):
-		store.data = before
-		return _failure("Недостаточно ресурсов на складе для следующего этапа.", cost)
-	_pay(cost)
-	store.data.bunker_level += 1
-	if not store.save_progress():
-		store.data = before
-		return _failure(store.last_error, cost)
-	return {"ok": true, "reason": BUNKER_STAGES[int(store.data.bunker_level)] + " построен.", "cost": cost}
+	return _schedule(-1, -1, int(store.data.bunker_level) + 1, cost)
 
 
 func battle_bonuses() -> Dictionary:

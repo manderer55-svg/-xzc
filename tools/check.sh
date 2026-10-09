@@ -12,6 +12,7 @@ bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_ui_p
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --audio-driver Dummy --script res://tests/test_content.gd
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_colony.gd
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_colony_map.gd
+bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_city_economy.gd
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_expeditions.gd
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_heroes.gd
 bash "$PROJECT_ROOT/tools/run_game.sh" --headless --script res://tests/test_city_management.gd

@@ -9,12 +9,12 @@ const FIELD_GATE_CELL := Vector2i(15, 27)
 const FIELD_GATE_ACCESS := Vector2i(15, 28)
 const RESOURCE_KEYS := ["stone", "wood", "essence"]
 const DIRECTIONS := [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i.UP]
-const RESPAWN_SECONDS := 120.0
-const STEP_SECONDS := 0.25
-const MINING_SECONDS := 1.25
+const RESPAWN_SECONDS := 900.0
+const STEP_SECONDS := 1.5
+const MINING_SECONDS := 5.0
 const MINING_BATCH := 5
 const CHECKPOINT_SECONDS := 2.0
-const OFFLINE_CAP := 8.0 * 60.0 * 60.0
+const OFFLINE_CAP := 7.0 * 24.0 * 60.0 * 60.0
 const MAX_RESOURCE := 1000000000
 
 var settlement: SettlementModel
@@ -122,8 +122,8 @@ func dispatch(deposit_id: int, hero_id: String = "", troop_type: String = "") ->
 		var city_bonuses: Dictionary = settlement.call("expedition_bonuses") if settlement.has_method("expedition_bonuses") else {}
 		party["yield_bonus"] = int(city_bonuses.get("yield_percent", 0))
 		party["damage_bonus"] = int(city_bonuses.get("party_damage_percent", 0))
-	party["yield_bonus"] = clampi(int(party.get("yield_bonus", 0)), 0, 75)
-	party["damage_bonus"] = clampi(int(party.get("damage_bonus", 0)), 0, 120)
+	party["yield_bonus"] = clampi(int(party.get("yield_bonus", 0)), 0, 100)
+	party["damage_bonus"] = clampi(int(party.get("damage_bonus", 0)), 0, 150)
 	if not party.has("party_damage"):
 		for troop: Dictionary in HeroModel.TROOPS:
 			if troop.id == party.troop_type:
@@ -141,9 +141,10 @@ func dispatch(deposit_id: int, hero_id: String = "", troop_type: String = "") ->
 	jobs().append({"id": id, "deposit_id": deposit_id, "phase": "outbound",
 		"position": [float(FIELD_GATE_ACCESS.x), float(FIELD_GATE_ACCESS.y)], "path": path,
 		"path_index": 0, "step_elapsed": 0.0, "mining_elapsed": 0.0,
-		"cargo_resource": str(deposit.resource), "cargo_amount": 0, "raw_cargo": 0, "delivery_retry": 0.0,
+		"arrival_elapsed": 0.0, "cargo_resource": str(deposit.resource), "cargo_amount": 0, "raw_cargo": 0, "delivery_retry": 0.0,
 		"hero_id": str(party.hero_id), "troop_type": str(party.troop_type), "troop_count": int(party.troop_count),
 		"yield_bonus": int(party.yield_bonus), "damage_bonus": int(party.damage_bonus),
+		"mining_seconds": settlement.mining_seconds(str(party.troop_type)), "mining_batch": settlement.mining_batch(str(deposit.resource)), "step_seconds": settlement.march_seconds(str(party.troop_type)),
 		"party_damage": maxi(0, int(party.get("party_damage", 0)))})
 	if not store.save_progress():
 		store.data = before
@@ -155,16 +156,14 @@ func dispatch(deposit_id: int, hero_id: String = "", troop_type: String = "") ->
 func advance(delta: float) -> Dictionary:
 	if store == null or not is_finite(delta) or delta <= 0.0:
 		return {"ok": true, "changed": false, "deliveries": []}
-	var before := store.data.duplicate(true)
 	var remaining := minf(delta, OFFLINE_CAP)
+	var before: Dictionary = store.data.duplicate(true) if _will_persist(remaining) else {}
 	var deliveries: Array = []
 	var important := false
 	# Small bounded steps preserve arrival/mining order even when resuming after a long pause.
 	# Once all finite jobs finish, skip directly to respawns instead of simulating idle hours.
 	while remaining > 0.00001:
-		var step := minf(remaining, STEP_SECONDS)
-		if jobs().is_empty():
-			step = remaining
+		var step := _event_step(remaining)
 		_state().clock = float(_state().clock) + step
 		remaining -= step
 		for job: Dictionary in jobs().duplicate():
@@ -173,18 +172,71 @@ func advance(delta: float) -> Dictionary:
 			if not bool(deposit.active) and float(deposit.respawn_at) <= float(_state().clock):
 				if _spawn_deposit(deposit, false):
 					important = true
-		_save_elapsed += step
+		_save_elapsed = _save_elapsed + step if not jobs().is_empty() else 0.0
 	if important:
 		_rebuild_navigation()
-	if important or _save_elapsed >= CHECKPOINT_SECONDS:
+	if important or (_has_travelling_jobs() and _save_elapsed >= CHECKPOINT_SECONDS):
 		if not store.save_progress():
-			store.data = before
+			if not before.is_empty():
+				store.data = before
 			_rebuild_navigation()
 			last_error = store.last_error
 			return {"ok": false, "reason": last_error, "changed": false, "deliveries": []}
 		_save_elapsed = 0.0
 	last_error = ""
 	return {"ok": true, "changed": important, "deliveries": deliveries}
+
+
+func _has_travelling_jobs() -> bool:
+	for job: Dictionary in jobs():
+		if str(job.phase) in ["outbound", "returning"]:
+			return true
+	return false
+
+
+func _will_persist(delta: float) -> bool:
+	# Snapshot only transactions that can write; idle/tiny animation updates need no full save copy.
+	if _has_travelling_jobs() and _save_elapsed + delta >= CHECKPOINT_SECONDS:
+		return true
+	for job: Dictionary in jobs():
+		match str(job.phase):
+			"mining":
+				var deposit := get_deposit(int(job.deposit_id))
+				if deposit.is_empty() or not bool(deposit.active):
+					return true
+				if float(job.mining_elapsed) + delta >= _mining_seconds(job):
+					return true
+			"outbound", "returning":
+				var seconds := maxi(0, job.path.size() - 1 - int(job.path_index)) * _travel_step(job) - float(job.step_elapsed)
+				if str(job.phase) == "returning" and int(job.path_index) >= job.path.size() - 1:
+					seconds = 3.0 * _travel_step(job) - float(job.get("arrival_elapsed", 0.0))
+				if delta >= seconds:
+					return true
+			"delivery_retry":
+				if float(job.get("delivery_retry", 0.0)) + delta >= 2.0:
+					return true
+	for deposit: Dictionary in deposits():
+		if not bool(deposit.active) and float(deposit.respawn_at) <= float(_state().clock) + delta:
+			return true
+	return false
+
+
+func _event_step(remaining: float) -> float:
+	# Offline mining jumps to the next extraction/respawn event instead of replaying frames.
+	# A full warehouse cannot become available within one advance call: retry once per event.
+	var step := remaining
+	for job: Dictionary in jobs():
+		if str(job.phase) in ["outbound", "returning"]:
+			var until_event := _travel_step(job) - float(job.step_elapsed)
+			if str(job.phase) == "returning" and int(job.path_index) >= job.path.size() - 1:
+				until_event = 3.0 * _travel_step(job) - float(job.get("arrival_elapsed", 0.0))
+			step = minf(step, maxf(0.00001, until_event))
+		elif str(job.phase) == "mining":
+			step = minf(step, maxf(0.00001, _mining_seconds(job) - float(job.mining_elapsed)))
+	for deposit: Dictionary in deposits():
+		if not bool(deposit.active):
+			step = minf(step, maxf(0.00001, float(deposit.respawn_at) - float(_state().clock)))
+	return step
 
 
 func checkpoint() -> bool:
@@ -219,15 +271,17 @@ func job_position(job: Dictionary) -> Vector2:
 
 
 func job_eta(job: Dictionary) -> int:
-	var travel := maxf(0, job.path.size() - 1 - int(job.path_index)) * STEP_SECONDS - float(job.step_elapsed)
+	var travel := maxf(0, job.path.size() - 1 - int(job.path_index)) * _travel_step(job) - float(job.step_elapsed)
 	if job.phase == "mining":
 		var deposit := get_deposit(int(job.deposit_id))
-		var extraction := ceili(float(deposit.get("remaining", 0)) / _mining_batch(deposit)) * MINING_SECONDS
-		return ceili(extraction + _return_path(job).size() * STEP_SECONDS)
+		var extraction := maxf(0.0, ceili(float(deposit.get("remaining", 0)) / _mining_batch(deposit, job)) * _mining_seconds(job) - float(job.mining_elapsed))
+		return ceili(extraction + maxi(0, _return_path(job).size() - 1) * _travel_step(job) + 3.0 * _travel_step(job))
 	if job.phase == "outbound":
 		var deposit := get_deposit(int(job.deposit_id))
-		travel += ceili(float(deposit.get("remaining", 0)) / _mining_batch(deposit)) * MINING_SECONDS
-		travel += maxi(0, job.path.size() - 1) * STEP_SECONDS
+		travel += ceili(float(deposit.get("remaining", 0)) / _mining_batch(deposit, job)) * _mining_seconds(job)
+		travel += maxi(0, job.path.size() - 1) * _travel_step(job) + 3.0 * _travel_step(job)
+	if job.phase == "returning":
+		travel += maxf(0.0, 3.0 * _travel_step(job) - float(job.get("arrival_elapsed", 0.0)))
 	return maxi(0, ceili(travel))
 
 
@@ -241,10 +295,10 @@ func _step_job(job: Dictionary, delta: float, deliveries: Array) -> bool:
 				_start_return(job)
 				return true
 			job.mining_elapsed = float(job.mining_elapsed) + delta
-			if float(job.mining_elapsed) < MINING_SECONDS:
+			if float(job.mining_elapsed) < _mining_seconds(job):
 				return false
-			job.mining_elapsed = float(job.mining_elapsed) - MINING_SECONDS
-			var amount := mini(_mining_batch(deposit), int(deposit.remaining))
+			job.mining_elapsed = float(job.mining_elapsed) - _mining_seconds(job)
+			var amount := mini(_mining_batch(deposit, job), int(deposit.remaining))
 			deposit.remaining = int(deposit.remaining) - amount
 			job.cargo_amount = int(job.cargo_amount) + amount
 			job.raw_cargo = int(job.get("raw_cargo", 0)) + amount
@@ -266,12 +320,13 @@ func _move_job(job: Dictionary, delta: float, deliveries: Array) -> bool:
 	if path.is_empty():
 		return _repair_route(job)
 	job.step_elapsed = float(job.step_elapsed) + delta
-	while float(job.step_elapsed) >= STEP_SECONDS and int(job.path_index) < path.size() - 1:
-		job.step_elapsed = float(job.step_elapsed) - STEP_SECONDS
+	while float(job.step_elapsed) >= _travel_step(job) and int(job.path_index) < path.size() - 1:
+		job.step_elapsed = float(job.step_elapsed) - _travel_step(job)
 		job.path_index = int(job.path_index) + 1
 	if int(job.path_index) >= path.size() - 1:
 		var end: Array = path.back() if not path.is_empty() else [FIELD_GATE_ACCESS.x, FIELD_GATE_ACCESS.y]
 		job.position = [float(end[0]), float(end[1])]
+		var arrived_time := float(job.step_elapsed)
 		job.step_elapsed = 0.0
 		if job.phase == "outbound":
 			var deposit := get_deposit(int(job.deposit_id))
@@ -285,10 +340,13 @@ func _move_job(job: Dictionary, delta: float, deliveries: Array) -> bool:
 				return _repair_route(job)
 			job.phase = "mining"
 			return true
+		job["arrival_elapsed"] = float(job.get("arrival_elapsed", 0.0)) + arrived_time
+		if float(job.arrival_elapsed) < 3.0 * _travel_step(job):
+			return false
 		return _deliver_job(job, deliveries)
 	var from: Array = path[int(job.path_index)]
 	var target: Array = path[int(job.path_index) + 1]
-	var fraction := float(job.step_elapsed) / STEP_SECONDS
+	var fraction := float(job.step_elapsed) / _travel_step(job)
 	job.position = [lerpf(float(from[0]), float(target[0]), fraction), lerpf(float(from[1]), float(target[1]), fraction)]
 	return false
 
@@ -380,7 +438,9 @@ func _spawn_deposit(deposit: Dictionary, initial: bool) -> bool:
 		deposit.respawn_at = float(_state().clock) + 10.0
 		return false
 	var fallback := deposit.duplicate(true)
-	var stock := 60 + _random(17) * 5
+	var tier := deposit_level()
+	var stock := int((3000 + _random(13) * 250) * (tier + 3) / 4)
+	deposit["level"] = tier
 	deposit.resource = resource
 	deposit.initial_stock = stock
 	deposit.remaining = stock
@@ -465,6 +525,7 @@ func _sanitize_state() -> void:
 		deposit.id = id
 		var cell := _cell(deposit.cell)
 		deposit.cell = [cell.x, cell.y]
+		deposit["level"] = clampi(int(deposit.get("level", 1)), 1, 40)
 		deposit.remaining = clampi(int(deposit.get("remaining", 0)), 0, MAX_RESOURCE)
 		deposit.initial_stock = maxi(int(deposit.remaining), int(deposit.get("initial_stock", deposit.remaining)))
 		deposit.active = deposit.get("active", false) == true and int(deposit.remaining) > 0
@@ -497,16 +558,20 @@ func _sanitize_state() -> void:
 		seen[id] = true
 		job.id = id
 		job.path_index = clampi(int(job.get("path_index", 0)), 0, job.path.size() - 1) if not job.path.is_empty() else 0
-		job.step_elapsed = clampf(float(job.get("step_elapsed", 0.0)), 0.0, STEP_SECONDS)
-		job.mining_elapsed = clampf(float(job.get("mining_elapsed", 0.0)), 0.0, MINING_SECONDS)
+		job["step_seconds"] = clampf(float(job.get("step_seconds", 0.25)), 0.2, STEP_SECONDS)
+		job["mining_batch"] = clampi(int(job.get("mining_batch", 5)), 5, 24)
+		job.step_elapsed = clampf(float(job.get("step_elapsed", 0.0)), 0.0, _travel_step(job))
+		job["mining_seconds"] = clampf(float(job.get("mining_seconds", 5.0)), 2.0, 5.0)
+		job.mining_elapsed = clampf(float(job.get("mining_elapsed", 0.0)), 0.0, _mining_seconds(job))
+		job["arrival_elapsed"] = clampf(float(job.get("arrival_elapsed", 0.0)), 0.0, 4.5)
 		job.delivery_retry = clampf(float(job.get("delivery_retry", 0.0)), 0.0, 2.0)
 		job.cargo_amount = clampi(int(job.get("cargo_amount", 0)), 0, MAX_RESOURCE)
 		job.raw_cargo = clampi(int(job.get("raw_cargo", job.cargo_amount)), 0, MAX_RESOURCE)
 		job.hero_id = str(job.get("hero_id", "warden"))
 		job.troop_type = str(job.get("troop_type", "infantry"))
 		job.troop_count = clampi(int(job.get("troop_count", 3)), 1, 20)
-		job.yield_bonus = clampi(int(job.get("yield_bonus", 0)), 0, 75)
-		job.damage_bonus = clampi(int(job.get("damage_bonus", 0)), 0, 120)
+		job.yield_bonus = clampi(int(job.get("yield_bonus", 0)), 0, 100)
+		job.damage_bonus = clampi(int(job.get("damage_bonus", 0)), 0, 150)
 		job.party_damage = maxi(0, int(job.get("party_damage", 0)))
 		job.deposit_id = int(job.get("deposit_id", 0))
 		safe_jobs.append(job)
@@ -523,9 +588,14 @@ func _random(limit: int) -> int:
 	return int(_state().random_state) % maxi(1, limit)
 
 
-func _mining_batch(deposit: Dictionary) -> int:
+func deposit_level() -> int:
+	# Only completed campaign progress affects NEW deposits. Existing stock stays intact.
+	return clampi(1 + maxi(0, int(store.data.get("level", 1)) - 1) / 25, 1, 40)
+
+
+func _mining_batch(deposit: Dictionary, job: Dictionary = {}) -> int:
 	# Large migrated offline stock finishes in a reasonable expedition, rather than hours.
-	return maxi(MINING_BATCH, ceili(float(deposit.get("initial_stock", MINING_BATCH)) / 32.0))
+	return maxi(int(job.get("mining_batch", MINING_BATCH)), ceili(float(deposit.get("initial_stock", MINING_BATCH)) / 100000.0))
 
 
 func _failure(reason: String) -> Dictionary:
@@ -599,3 +669,11 @@ static func _contains(cell: Vector2i) -> bool:
 
 static func _hash(cell: Vector2i, salt: int) -> int:
 	return absi((cell.x * 73856093) ^ (cell.y * 19349663) ^ (salt * 83492791))
+
+
+func _travel_step(job: Dictionary) -> float:
+	return clampf(float(job.get("step_seconds", 0.25)), 0.2, STEP_SECONDS)
+
+
+func _mining_seconds(job: Dictionary) -> float:
+	return clampf(float(job.get("mining_seconds", MINING_SECONDS)), 2.0, 5.0)

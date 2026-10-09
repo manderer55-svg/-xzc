@@ -127,7 +127,7 @@ func _show_mode(next_mode: String, feedback: String = "") -> void:
 		_title.text = "ПОСТРОЙКИ ЗАМКА"
 		_subtitle.text = "Выберите здание, затем свободный участок в городе."
 		_build_catalogue()
-		status_label.text = "Листайте каталог вверх и вниз. Постройки развиваются до 4 уровня."
+		status_label.text = "Листайте каталог вверх и вниз. Постройки развиваются до 20 уровней."
 	elif mode == "heroes":
 		_title.text = "ТАВЕРНА И ГЕРОИ"
 		_subtitle.text = "Сундук: 3 карты · %s.\nГерои открываются и растут за карты." % str(heroes.info().get("card_chances", "25% каждому герою"))
@@ -208,7 +208,10 @@ func _build_heroes() -> void:
 		if action.disabled:
 			action.modulate = Color(0.65, 0.65, 0.68)
 		hero_action_buttons[id] = action
-	upgrade_button.disabled = str(info.get("selected_hero", "")).is_empty()
+	var selected: Dictionary = owned.get(str(info.get("selected_hero", "")), {})
+	var required_cards := int(selected.get("upgrade_cards", 0))
+	upgrade_button.disabled = selected.is_empty() or required_cards <= 0 or int(selected.get("cards", 0)) < required_cards
+	upgrade_button.modulate = Color(0.65, 0.65, 0.68) if upgrade_button.disabled else Color.WHITE
 	chest_button.disabled = not bool(info.get("recruit_unlocked", false))
 	chest_button.modulate = Color(0.65, 0.65, 0.68) if chest_button.disabled else Color.WHITE
 	var chest_cost: Dictionary = info.get("chest_cost", HeroModel.CHEST_COST)

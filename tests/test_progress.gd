@@ -29,13 +29,13 @@ func _initialize() -> void:
 
 	var model = Settlement.new()
 	model.configure(restored)
-	_check(model.build(0, 0)["ok"], "a modest starting campaign can build one quarry")
+	_check(_complete_build(model, 0, 0)["ok"], "a modest starting campaign can build one quarry")
 	_check(model.production()["stone"] == 8, "quarry has minute production")
 	_check(model.battle_bonuses()["bonus_moves"] == 1, "building a quarry helps the next battle")
-	_check(not model.build(0, 1)["ok"], "occupied plot is protected")
-	_check(not model.build(-1, 0)["ok"], "invalid plot is protected")
+	_check(not _complete_build(model, 0, 1)["ok"], "occupied plot is protected")
+	_check(not _complete_build(model, -1, 0)["ok"], "invalid plot is protected")
 	var built: Dictionary = restored.data.duplicate(true)
-	_check(not model.build(1, 3)["ok"], "unaffordable construction is rejected")
+	_check(not _complete_build(model, 1, 3)["ok"], "unaffordable construction is rejected")
 	_check(built == restored.data, "failed construction changes no resources")
 	_check(not model.mine()["ok"], "immediate collection is on cooldown")
 	restored.data["last_mine_time"] = int(Time.get_unix_time_from_system()) - 121
@@ -52,7 +52,7 @@ func _initialize() -> void:
 	restored.path = blocked_path
 	var before_failed_save: Dictionary = restored.data.duplicate(true)
 	_check(not restored.update_setting("reduced_effects", true) and restored.data == before_failed_save, "setting changes roll back when persistence fails")
-	_check(not model.build(1, 0)["ok"], "construction reports failed persistence")
+	_check(not _complete_build(model, 1, 0)["ok"], "construction reports failed persistence")
 	_check(restored.data == before_failed_save, "construction rolls back when saving fails")
 	var failed_reward: Dictionary = restored.award_level(2, 4000, true, {0: 50})
 	_check(failed_reward["stone"] == 0 and restored.data == before_failed_save and restored.last_award_status == "save_failed", "level rewards roll back when saving fails")
@@ -64,9 +64,10 @@ func _initialize() -> void:
 	DirAccess.remove_absolute(blocked_directory)
 	restored.data["resources"] = {"stone": 10000, "wood": 10000, "essence": 10000}
 	for index in range(3):
-		_check(model.upgrade(0)["ok"], "upgrade tier %d is available" % (index + 1))
+		_check(_complete_upgrade(model, 0)["ok"], "upgrade tier %d is available" % (index + 1))
 	_check(model.production()["stone"] == 32, "upgrades improve production")
-	_check(not model.upgrade(0)["ok"], "building upgrades stop at tier three")
+	restored.data.upgrades[0] = Settlement.MAX_UPGRADE
+	_check(not _complete_upgrade(model, 0)["ok"], "building upgrades stop at level twenty")
 	restored.data["last_mine_time"] = int(Time.get_unix_time_from_system()) + 10000
 	_check(not model.mine()["ok"], "future clock creates no production")
 	_check(model.seconds_until_mine() <= 60, "future clock is repaired")
@@ -147,23 +148,23 @@ func _test_migration_and_settings() -> void:
 func _test_bonuses() -> void:
 	var progress = Progress.new()
 	progress.path = save_path + ".bonuses"
-	progress.data["resources"] = {"stone": 100000, "wood": 100000, "essence": 100000}
+	progress.data["resources"] = {"stone": 10000000, "wood": 10000000, "essence": 10000000}
 	var model = Settlement.new()
 	model.configure(progress)
 	_check(model.battle_bonuses() == {"bonus_moves": 0, "starting_specials": 0, "boss_damage_bonus": 0, "reward_percent": 0, "essence_boost": 0, "forge_bomb": 0, "seal_damage_bonus": 0}, "an empty settlement grants no battle bonus")
 	for kind in range(4):
-		_check(model.build(kind, kind)["ok"], "each building kind is constructible")
+		_check(_complete_build(model, kind, kind)["ok"], "each building kind is constructible")
 	var initial: Dictionary = model.battle_bonuses()
 	_check(initial == {"bonus_moves": 2, "starting_specials": 1, "boss_damage_bonus": 1, "reward_percent": 15, "essence_boost": 1, "forge_bomb": 0, "seal_damage_bonus": 0}, "four initial buildings provide four concrete battle benefits")
 	for slot in range(4):
 		for tier in range(3):
-			_check(model.upgrade(slot)["ok"], "upgrading building %d tier %d succeeds" % [slot, tier + 1])
+			_check(_complete_upgrade(model, slot)["ok"], "upgrading building %d tier %d succeeds" % [slot, tier + 1])
 	var full: Dictionary = model.battle_bonuses()
 	_check(full == {"bonus_moves": 3, "starting_specials": 2, "boss_damage_bonus": 2, "reward_percent": 30, "essence_boost": 4, "forge_bomb": 0, "seal_damage_bonus": 0}, "fully upgraded battle bonuses stop at fair caps")
 	for slot in range(4, 9):
-		_check(model.build(slot, mini(slot - 4, 3))["ok"], "duplicate buildings may increase production")
+		_check(_complete_build(model, slot, mini(slot - 4, 3))["ok"], "duplicate buildings may increase production")
 		for tier in range(3):
-			_check(model.upgrade(slot)["ok"], "duplicate buildings may be upgraded")
+			_check(_complete_upgrade(model, slot)["ok"], "duplicate buildings may be upgraded")
 	_check(model.battle_bonuses() == full, "nine building slots cannot multiply battle bonuses")
 	var descriptions: Array[String] = model.bonus_descriptions()
 	for title in Settlement.TITLES.slice(0, 4):
@@ -181,3 +182,24 @@ func _test_bonuses() -> void:
 	var clamped: Dictionary = progress.award_level(11, 0, true, {}, {"reward_percent": 999999, "essence_boost": 999999})
 	_check(clamped == {"stone": 10, "wood": 7, "essence": 9}, "untrusted reward bonus inputs are clamped")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(progress.path))
+
+
+func _complete_build(model: SettlementModel, slot: int, kind: int) -> Dictionary:
+	var result := model.build(slot, kind)
+	if result.ok:
+		model.sync_construction(int(model.construction_job().ends_at))
+	return result
+
+
+func _complete_upgrade(model: SettlementModel, slot: int) -> Dictionary:
+	var result := model.upgrade(slot)
+	if result.ok:
+		model.sync_construction(int(model.construction_job().ends_at))
+	return result
+
+
+func _complete_build_bunker(model: SettlementModel) -> Dictionary:
+	var result := model.build_bunker()
+	if result.ok:
+		model.sync_construction(int(model.construction_job().ends_at))
+	return result

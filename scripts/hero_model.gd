@@ -72,11 +72,11 @@ func catalog() -> Array[Dictionary]:
 		entry["unlock_cards"] = 0 if hero.id == "warden" else UNLOCK_CARDS
 		entry["upgrade_cards"] = level * 2 if level > 0 and level < MAX_LEVEL else 0
 		entry["busy"] = hero_busy(str(hero.id))
-		entry["damage_bonus"] = damage_bonus(str(hero.id)) if level > 0 else mini(100, int(hero.damage) + int(city_bonuses.get("party_damage_percent", 0)))
+		entry["damage_bonus"] = damage_bonus(str(hero.id)) if level > 0 else mini(150, int(hero.damage) + int(city_bonuses.get("party_damage_percent", 0)))
 		entry["yield_bonuses"] = {}
 		for resource in RESOURCE_KEYS:
 			var base := int(hero["yield"]) if hero.resource in [resource, "all"] else 5
-			entry.yield_bonuses[resource] = yield_bonus(str(hero.id), resource) if level > 0 else mini(50, base + int(city_bonuses.get("yield_percent", 0)))
+			entry.yield_bonuses[resource] = yield_bonus(str(hero.id), resource) if level > 0 else mini(100, base + int(city_bonuses.get("yield_percent", 0)))
 		result.append(entry)
 	return result
 
@@ -152,15 +152,24 @@ func card_count(id: String) -> int:
 	return clampi(int(store.data.get("hero_state", {}).get("cards", {}).get(id, 0)), 0, MAX_CARDS)
 
 
+func chest_cost() -> Dictionary:
+	var discount := maxi(0, _building_level(13) - 1)
+	var cost: Dictionary = {}
+	for resource in RESOURCE_KEYS:
+		cost[resource] = maxi(1, floori(int(CHEST_COST[resource]) * (100.0 - discount) / 100.0))
+	return cost
+
+
 func buy_chest() -> Dictionary:
+	var cost := chest_cost()
 	if store == null or _building_level(13) < 1:
 		return _failure("Постройте таверну, чтобы открывать сундуки героев.")
-	if not _can_pay(CHEST_COST):
-		return _failure("Недостаточно ресурсов на складе для сундука.", CHEST_COST)
+	if not _can_pay(cost):
+		return _failure("Недостаточно ресурсов на складе для сундука.", cost)
 	if int(store.data.hero_state.chests) >= MAX_CARDS:
 		return _failure("Достигнут предел сундуков этого сохранения.")
 	var before := store.data.duplicate(true)
-	_pay(CHEST_COST)
+	_pay(cost)
 	var counter := int(store.data.hero_state.chests) + 1
 	var seed := (counter * 104729 + 7919) & 0x7fffffff
 	var rewards: Dictionary = {}
@@ -176,9 +185,9 @@ func buy_chest() -> Dictionary:
 	store.data.hero_state.chests = counter
 	if not store.save_progress():
 		store.data = before
-		return _failure(store.last_error, CHEST_COST)
+		return _failure(store.last_error, cost)
 	last_error = ""
-	return {"ok": true, "reason": "Сундук открыт: три карты героев.", "cost": CHEST_COST.duplicate(), "cards": rewards}
+	return {"ok": true, "reason": "Сундук открыт: три карты героев.", "cost": cost.duplicate(), "cards": rewards}
 
 
 static func level_card_reward(level: int) -> Dictionary:
@@ -287,12 +296,12 @@ func yield_bonus(id: String, resource: String) -> int:
 	if level <= 0 or resource not in RESOURCE_KEYS:
 		return 0
 	var base := int(hero["yield"]) if hero.resource in [resource, "all"] else 5
-	return mini(50, base + (level - 1) * 5 + int(_town.expedition_bonuses().get("yield_percent", 0)))
+	return mini(100, base + (level - 1) * 5 + int(_town.expedition_bonuses().get("yield_percent", 0)))
 
 
 func damage_bonus(id: String) -> int:
 	var level := hero_level(id)
-	return 0 if level <= 0 else mini(100, int(_hero(id).damage) + (level - 1) * 5 + int(_town.expedition_bonuses().get("party_damage_percent", 0)))
+	return 0 if level <= 0 else mini(150, int(_hero(id).damage) + (level - 1) * 5 + int(_town.expedition_bonuses().get("party_damage_percent", 0)))
 
 
 func extraction_cargo(id: String, resource: String, raw: int) -> int:
@@ -305,7 +314,8 @@ func party_damage(id: String, type: String, count: int = PARTY_SIZE) -> int:
 	var troop := _troop(type)
 	if troop.is_empty() or hero_level(id) <= 0:
 		return 0
-	var base := int(troop.damage) * clampi(count, 0, MAX_ARMY)
+	var veteran := 1.0 + maxi(0, _building_level(int(troop.building)) - 1) * 0.02
+	var base := floori(int(troop.damage) * clampi(count, 0, MAX_ARMY) * veteran)
 	return base + int(base * damage_bonus(id) / 100)
 
 
@@ -340,7 +350,7 @@ func party_for_job(job_id: int) -> Dictionary:
 		var result := {"hero_id": hero_id, "hero_name": str(_hero(hero_id).get("name", hero_id)), "troop_type": type,
 			"troop_count": count, "yield_bonus": int(job.get("yield_bonus", 0)), "damage_bonus": int(job.get("damage_bonus", 0))}
 		var base := int(_troop(type).get("damage", 0)) * count
-		result["party_damage"] = base + int(base * int(result.damage_bonus) / 100)
+		result["party_damage"] = int(job.get("party_damage", base + int(base * int(result.damage_bonus) / 100)))
 		return result
 	return {}
 
@@ -363,7 +373,7 @@ func info() -> Dictionary:
 	return {"heroes": owned(), "selected_hero": str(store.data.selected_hero), "selected_troop": str(store.data.selected_troop),
 		"army": store.data.army.duplicate(), "available_army": available, "troops": troops,
 		"recruit_unlocked": _building_level(13) >= 1, "tavern_level": _building_level(13), "party_size": PARTY_SIZE,
-		"chest_cost": CHEST_COST.duplicate(), "chest_count": int(store.data.hero_state.chests),
+		"chest_cost": chest_cost(), "chest_count": int(store.data.hero_state.chests),
 		"card_chances": "25% каждому герою", "cards": store.data.hero_state.cards.duplicate()}
 
 
@@ -375,7 +385,7 @@ func _building_level(kind: int) -> int:
 	var level := 0
 	for slot in range(mini(buildings.size(), upgrades.size())):
 		if int(buildings[slot]) == kind:
-			level = maxi(level, clampi(int(upgrades[slot]), 0, 3) + 1)
+			level = maxi(level, clampi(int(upgrades[slot]), 0, SettlementModel.MAX_UPGRADE) + 1)
 	return level
 
 

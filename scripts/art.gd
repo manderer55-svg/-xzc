@@ -49,11 +49,38 @@ const HERO_REGIONS := [Rect2(16, 30, 442, 403), Rect2(464, 15, 434, 418), Rect2(
 const TROOP_REGIONS := [Rect2(10, 441, 424, 432), Rect2(460, 441, 408, 428), Rect2(895, 428, 442, 444)]
 const BUNKER_REGIONS := [Rect2(22, 13, 732, 448), Rect2(790, 30, 725, 444), Rect2(17, 480, 753, 523), Rect2(781, 476, 742, 521)]
 
+# Authored rows are not exact thirds: measured alpha bounds prevent adjacent
+# cavalry heads and builder hammers from leaking into other animation frames.
+const ACTION_REGIONS := [Rect2(19, 14, 236, 214), Rect2(288, 15, 222, 216), Rect2(545, 15, 219, 219), Rect2(801, 16, 219, 219), Rect2(1061, 17, 217, 217), Rect2(1312, 17, 223, 218), Rect2(1570, 17, 218, 219), Rect2(1824, 17, 218, 218), Rect2(10, 237, 247, 271), Rect2(260, 243, 253, 274), Rect2(519, 242, 247, 274), Rect2(770, 242, 252, 269), Rect2(1027, 240, 253, 277), Rect2(1284, 245, 255, 272), Rect2(1543, 245, 247, 271), Rect2(1793, 245, 250, 266), Rect2(20, 526, 203, 217), Rect2(270, 516, 210, 227), Rect2(548, 531, 178, 213), Rect2(783, 576, 222, 174), Rect2(1046, 576, 219, 175), Rect2(1317, 544, 177, 200), Rect2(1571, 549, 186, 195), Rect2(1830, 527, 179, 217)]
+
+const MINING_REGIONS := [Rect2(44, 61, 198, 205), Rect2(318, 37, 166, 231), Rect2(570, 14, 171, 253), Rect2(816, 93, 218, 194), Rect2(1070, 101, 187, 192), Rect2(1322, 81, 214, 194), Rect2(1588, 59, 162, 215), Rect2(1830, 71, 186, 204), Rect2(52, 316, 193, 208), Rect2(313, 297, 163, 227), Rect2(557, 279, 179, 247), Rect2(827, 333, 195, 192), Rect2(1072, 352, 181, 176), Rect2(1329, 332, 187, 194), Rect2(1585, 299, 155, 226), Rect2(1834, 315, 185, 209), Rect2(15, 535, 238, 206), Rect2(267, 534, 239, 207), Rect2(527, 526, 245, 215), Rect2(779, 554, 243, 187), Rect2(1037, 563, 245, 179), Rect2(1295, 531, 231, 211), Rect2(1545, 535, 231, 199), Rect2(1802, 534, 234, 208)]
+
 static func texture(asset_name: String) -> Texture2D:
 	if _cache.has(asset_name):
 		return _cache[asset_name]
 	var result: Texture2D
-	if asset_name.begins_with("iso_tile_"):
+	if asset_name.begins_with("actor_mining_"):
+		var parts := asset_name.split("_")
+		var row := int(parts[2])
+		var frame := int(parts[3])
+		var bounds: Rect2 = MINING_REGIONS[row * 8 + frame]
+		var atlas := _region(_atlas("actors_mining"), bounds) as AtlasTexture
+		var canvas_height: float = [300.0, 260.0, 230.0][row]
+		var baseline: float = [298.0, 532.0, 747.0][row]
+		atlas.margin = Rect2(Vector2((256.0 - bounds.size.x) * 0.5, bounds.position.y - baseline + canvas_height), Vector2(256, canvas_height) - bounds.size)
+		result = atlas
+	elif asset_name.begins_with("actor_action_"):
+		var parts := asset_name.split("_")
+		var source := _atlas("actors_actions")
+		var row := int(parts[2])
+		var frame := int(parts[3])
+		var bounds: Rect2 = ACTION_REGIONS[row * 8 + frame]
+		var atlas := _region(source, bounds) as AtlasTexture
+		var row_start: float = [0.0, 236.0, 515.0][row]
+		var row_height: float = [236.0, 281.0, 253.0][row]
+		atlas.margin = Rect2(bounds.position - Vector2(frame * 256, row_start), Vector2(256, row_height) - bounds.size)
+		result = atlas
+	elif asset_name.begins_with("iso_tile_"):
 		result = _region(_atlas("iso_ground"), GROUND_REGIONS[clampi(int(asset_name.trim_prefix("iso_tile_")), 0, 8)])
 	elif asset_name.begins_with("iso_decor_"):
 		result = _region(_atlas("iso_nature"), NATURE_REGIONS[clampi(int(asset_name.trim_prefix("iso_decor_")), 0, 7)])

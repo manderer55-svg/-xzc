@@ -112,6 +112,7 @@ var haptics_button: TextureButton
 var sound_button: TextureButton
 var audio: AudioDirector
 var utility_mode := "help"
+var construction_poll := 0.0
 
 
 func _ready() -> void:
@@ -256,6 +257,11 @@ func _build_home_screen() -> void:
 
 
 func _process(delta: float) -> void:
+	construction_poll += delta
+	if construction_poll >= 1.0 and settlement != null:
+		construction_poll = 0.0
+		if settlement.sync_construction():
+			_update_settlement()
 	if is_instance_valid(expeditions) and not expedition_paused:
 		var result := expeditions.advance(delta)
 		if not result.ok and current_screen == "settlement":
@@ -1128,7 +1134,7 @@ func _update_settlement() -> void:
 		build_button.disabled = deposit.is_empty() or not bool(deposit.get("active", false)) or queue.free <= 0
 		build_button.modulate = Color(0.5, 0.5, 0.5) if build_button.disabled else Color.WHITE
 		var names := {"stone": "Рудник камня", "wood": "Лесная делянка", "essence": "Залежь эссенции"}
-		slot_title.text = names.get(deposit.get("resource", ""), "Выберите месторождение")
+		slot_title.text = names.get(deposit.get("resource", ""), "Выберите месторождение") + (" · ур. %d" % int(deposit.get("level", 1)) if not deposit.is_empty() else "")
 		var hero_id := String(store.data.selected_hero)
 		var hero_name := hero_id
 		for hero: Dictionary in heroes.catalog():
@@ -1145,7 +1151,7 @@ func _update_settlement() -> void:
 			for hero: Dictionary in heroes.catalog():
 				if hero.id == leader:
 					leader = hero.name
-			jobs.append("%s: %s (%d с)" % [leader, {"outbound": "идёт", "mining": "добывает", "returning": "возвращается", "delivery_retry": "ждёт склад"}.get(job.phase, "поход"), expeditions.job_eta(job)])
+			jobs.append("%s: %s%s" % [leader, {"outbound": "идёт", "mining": "добывает", "returning": "возвращается", "delivery_retry": "ждёт склад"}.get(job.phase, "поход"), "" if job.phase == "delivery_retry" else " (%s)" % _duration_text(expeditions.job_eta(job))])
 		slot_detail.text = details + (" · ".join(jobs) if not jobs.is_empty() else "Карточки героев: уровни матч-3 и сундуки таверны.")
 		return
 	_set_button_text(build_button, "Возвести этап" if selected_slot == -1 else "Построить")
@@ -1164,11 +1170,19 @@ func _update_settlement() -> void:
 		upgrade_button.disabled = kind < 0 or tier >= SettlementModel.MAX_UPGRADE
 		if kind < 0:
 			slot_title.text = "Участок %d · %s" % [selected_slot + 1, BUILDING_NAMES[selected_kind]]
-			slot_detail.text = "Цена: %s\n%s\n«Постройки» — выбрать другое здание." % [_cost_text(settlement.get_build_cost(selected_kind)), settlement.get_building_description(selected_kind)]
+			slot_detail.text = "Цена: %s · %d мин\n%s\n«Постройки» — выбрать другое здание." % [_cost_text(settlement.get_build_cost(selected_kind)), ceili(settlement.work_seconds(1) / 60.0), settlement.get_building_description(selected_kind)]
 		else:
 			slot_title.text = "%s · уровень %d" % [BUILDING_NAMES[kind], tier + 1]
-			var cost := "Максимальный уровень" if tier >= SettlementModel.MAX_UPGRADE else "Улучшение: %s" % _cost_text(settlement.get_upgrade_cost(selected_slot))
+			var cost := "Максимальный уровень" if tier >= SettlementModel.MAX_UPGRADE else "Улучшение: %s · %d мин" % [_cost_text(settlement.get_upgrade_cost(selected_slot)), ceili(settlement.work_seconds(tier + 2) / 60.0)]
 			slot_detail.text = "%s\n%s" % [cost, settlement.get_building_description(kind)]
+	var construction := settlement.construction_job()
+	if not construction.is_empty():
+		var seconds := settlement.construction_remaining()
+		var work_name: String = "Бункер" if int(construction.slot) == -1 else BUILDING_NAMES[int(construction.kind)]
+		slot_detail.text = "%s → ур. %d · %02d:%02d:%02d\nРабота продолжается после закрытия игры." % [work_name, int(construction.target_level), seconds / 3600, (seconds / 60) % 60, seconds % 60]
+		build_button.disabled = true
+		upgrade_button.disabled = true
+
 	build_button.modulate = Color(0.5, 0.5, 0.5) if build_button.disabled else Color.WHITE
 	upgrade_button.modulate = Color(0.5, 0.5, 0.5) if upgrade_button.disabled else Color.WHITE
 
@@ -1185,6 +1199,14 @@ func _texture_hit_mask(key: String) -> BitMap:
 	bitmap.create_from_image_alpha(image_data, 0.2)
 	texture_hit_masks[key] = bitmap
 	return bitmap
+
+
+func _duration_text(seconds: int) -> String:
+	if seconds >= 3600:
+		return "%dч %02dм %02dс" % [seconds / 3600, (seconds / 60) % 60, seconds % 60]
+	if seconds >= 60:
+		return "%dм %02dс" % [seconds / 60, seconds % 60]
+	return "%dс" % seconds
 
 
 func _cost_text(cost) -> String:
@@ -1222,13 +1244,13 @@ func _operation_ok(result) -> bool:
 
 func _build_selected() -> void:
 	var result = settlement.build_bunker() if selected_slot == -1 else settlement.build(selected_slot, selected_kind)
-	settlement_status.text = "%s: строительство сохранено." % ("Бункер" if selected_slot == -1 else BUILDING_NAMES[selected_kind]) if _operation_ok(result) else _operation_error(result)
+	settlement_status.text = String(result.get("reason", "Работы начались."))
 	_update_settlement()
 
 
 func _upgrade_selected() -> void:
 	var result = settlement.upgrade(selected_slot)
-	settlement_status.text = "Постройка улучшена. Бонусы со следующей попытки." if _operation_ok(result) else _operation_error(result)
+	settlement_status.text = String(result.get("reason", "Улучшение началось."))
 	_update_settlement()
 
 
@@ -1353,6 +1375,9 @@ func _smoke() -> void:
 		modal.visible = false
 	_open_settlement()
 	_build_selected()
+	if not settlement.construction_job().is_empty():
+		settlement.sync_construction(int(settlement.construction_job().ends_at))
+		_update_settlement()
 	if int(store.data.buildings[selected_slot]) != selected_kind:
 		push_error("UI_SMOKE_BUILD_FAILED: " + settlement_status.text)
 		get_tree().quit(1)
@@ -1454,6 +1479,18 @@ func _smoke_city_and_sound(preview_dir: String) -> bool:
 			await _smoke_touch_control(build_button)
 		else:
 			await _smoke_press_control(build_button)
+		if settlement.construction_job().is_empty():
+			push_error("UI_SMOKE_BUILDING_TIMER_MISSING")
+			return false
+		if kind == 6:
+			await get_tree().process_frame
+			await get_tree().process_frame
+			if not settlement_grid.builder.node.visible:
+				push_error("UI_SMOKE_CONSTRUCTION_BUILDER_MISSING")
+				return false
+			await _capture_preview(preview_dir.path_join("construction.png"))
+		settlement.sync_construction(int(settlement.construction_job().ends_at))
+		_update_settlement()
 		if int(store.data.buildings[kind]) != kind:
 			push_error("UI_SMOKE_BUILDING_TOUCH_FAILED kind=%d" % kind)
 			return false
@@ -1475,6 +1512,8 @@ func _smoke_city_and_sound(preview_dir: String) -> bool:
 	settlement_grid.focus_slot(-1)
 	for stage in range(1, 4):
 		await _smoke_press_control(build_button)
+		settlement.sync_construction(int(settlement.construction_job().ends_at))
+		_update_settlement()
 		if int(store.data.bunker_level) != stage:
 			push_error("UI_SMOKE_BUNKER_STAGE_FAILED")
 			return false
@@ -1532,7 +1571,7 @@ func _smoke_city_and_sound(preview_dir: String) -> bool:
 	var resource := String(target.resource)
 	var balance_before := int(store.data.resources[resource])
 	for tick in range(300):
-		expeditions.advance(0.5)
+		expeditions.advance(120.0)
 		if tick % 30 == 0:
 			await get_tree().process_frame
 	if not expeditions.jobs().is_empty() or int(store.data.resources[resource]) <= balance_before:

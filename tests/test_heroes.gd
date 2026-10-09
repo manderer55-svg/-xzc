@@ -142,8 +142,8 @@ func _run() -> void:
 		var dispatched := expeditions.dispatch(int(deposit.id), "warden", "infantry")
 		check(dispatched.ok and heroes.hero_busy("warden") and heroes.available_troops("infantry") == 17, "dispatch reserves the chosen commander and three real soldiers")
 		var guard := 0
-		while not expeditions.jobs().is_empty() and str(expeditions.jobs()[0].phase) != "returning" and guard < 200:
-			expeditions.advance(0.5)
+		while not expeditions.jobs().is_empty() and str(expeditions.jobs()[0].phase) != "returning" and guard < 2000:
+			expeditions.advance(5.0)
 			guard += 1
 		check(int(deposit.remaining) == 0 and not bool(deposit.active), "hero's bonus does not increase finite raw stock")
 		check(store.data.resources.stone == banked and heroes.hero_busy("warden"), "mining does not bank cargo or release the commander before arrival")

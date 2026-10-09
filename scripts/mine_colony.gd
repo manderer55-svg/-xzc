@@ -9,7 +9,8 @@ const KEYS := ["quarry", "sawmill", "shrine", "fortress", "forge", "watchtower",
 const MIN_ZOOM := 0.16
 const MAX_ZOOM := 1.2
 const DRAG_THRESHOLD := 12.0
-const PARTY_OFFSETS := [Vector2(0, -8), Vector2(-23, 12), Vector2(23, 13), Vector2(0, 31)]
+const FOREST_BORDER := 6
+const PARTY_OFFSETS := [Vector2(0, -22), Vector2(-38, 18), Vector2(38, 18), Vector2(0, 55)]
 const DEPOT := Vector2(-384, 1088)
 const BUNKER_FOOT := Vector2(0, 1216)
 class TerrainCanvas:
@@ -32,8 +33,12 @@ var workers: Array[Dictionary] = []
 var frames: Array[Texture2D] = []
 var hero_frames: Array[Texture2D] = []
 var troop_bodies: Array[Texture2D] = []
+var action_frames: Array[Texture2D] = []
+var mining_frames: Array[Texture2D] = []
 var feet: Array[Vector2] = []
 var levels: Array[GeneratedNumber] = []
+var builder: Dictionary = {}
+var construction_timer: Label
 var bunker: TextureButton
 var field_castle: TextureButton
 var navigation := AStarGrid2D.new()
@@ -88,6 +93,10 @@ func configure(value: SettlementModel, expedition_model: ExpeditionModel = null)
 	for hero in range(4):
 		for frame in range(4):
 			hero_frames.append(Art.texture("hero_world_%d_%d" % [hero, frame]))
+	for row in range(3):
+		for frame in range(8):
+			action_frames.append(Art.texture("actor_action_%d_%d" % [row, frame]))
+			mining_frames.append(Art.texture("actor_mining_%d_%d" % [row, frame]))
 	for troop in range(3):
 		troop_bodies.append(Art.texture("troop_%d" % troop))
 	_build_city()
@@ -151,6 +160,19 @@ func _build_city() -> void:
 	_building(city, Art.texture("warehouse"), ColonyMap.iso(ColonyMap.DEPOT_CELL), Vector2(205, 165), Vector2(102, 145))
 	bunker = _building(city, Art.texture("bunker_0"), ColonyMap.iso(ColonyMap.BUNKER_CELL), Vector2(212, 183), Vector2(106, 163))
 	bunker.pressed.connect(func(): selected.emit(-1))
+	builder = _actor(city, 50.0)
+	builder.node.visible = false
+	construction_timer = Label.new()
+	construction_timer.position = Vector2(-65, -115)
+	construction_timer.size = Vector2(210, 40)
+	construction_timer.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	construction_timer.add_theme_font_size_override("font_size", 22)
+	construction_timer.add_theme_color_override("font_color", Color("ffe7ab"))
+	construction_timer.add_theme_color_override("font_shadow_color", Color("100b16"))
+	construction_timer.add_theme_constant_override("shadow_offset_x", 2)
+	construction_timer.add_theme_constant_override("shadow_offset_y", 2)
+	construction_timer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	builder.node.add_child(construction_timer)
 
 func _build_region() -> void:
 	_build_decor(region, "region")
@@ -158,7 +180,7 @@ func _build_region() -> void:
 	for party in range(4):
 		var members: Array[Dictionary] = []
 		for member in range(4):
-			var actor := _actor(region, 64.0 if member == 0 else 48.0)
+			var actor := _actor(region, 56.0 if member == 0 else 52.0)
 			actor.node.visible = false
 			members.append(actor)
 		parties.append({"members": members, "job_id": -1})
@@ -181,7 +203,18 @@ func _actor(parent: Node2D, height: float) -> Dictionary:
 	cargo.size = Vector2(18, 18)
 	cargo.visible = false
 	node.add_child(cargo)
-	return {"node": node, "body": body, "cargo_sprite": cargo}
+	var mount := TextureRect.new()
+	mount.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mount.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	mount.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	mount.size = Vector2(62, 48)
+	mount.position = Vector2(-31, -45)
+	mount.visible = false
+	var mount_node := Node2D.new()
+	parent.add_child(mount_node)
+	mount_node.add_child(mount)
+	mount_node.visible = false
+	return {"node": node, "body": body, "cargo_sprite": cargo, "mount": mount, "mount_node": mount_node}
 
 func _build_decor(parent: Node2D, map_mode: String) -> void:
 	for y in range(ColonyMap.HEIGHT):
@@ -206,19 +239,32 @@ func _build_decor(parent: Node2D, map_mode: String) -> void:
 			decorations.append(base)
 
 func _draw_terrain(canvas: Node2D) -> void:
-	var bounds := _visible_bounds().grow(80)
-	for diagonal in range(ColonyMap.WIDTH + ColonyMap.HEIGHT - 1):
-		for x in range(ColonyMap.WIDTH):
+	var bounds := _visible_bounds().grow(200)
+	# These generated wilderness tiles are scenery beyond the 900 playable cells.
+	# Batch them into the terrain canvas: no extra entities, collisions or fake sites.
+	for diagonal in range(-FOREST_BORDER * 2, ColonyMap.WIDTH + ColonyMap.HEIGHT + FOREST_BORDER * 2 - 1):
+		for x in range(-FOREST_BORDER, ColonyMap.WIDTH + FOREST_BORDER):
 			var y := diagonal - x
-			if y < 0 or y >= ColonyMap.HEIGHT:
+			if y < -FOREST_BORDER or y >= ColonyMap.HEIGHT + FOREST_BORDER:
 				continue
 			var cell := Vector2i(x, y)
 			var position_world := ColonyMap.iso(cell)
 			var tile_rect := Rect2(position_world - Vector2(64, 32), Vector2(128, 64))
 			if not bounds.intersects(tile_rect):
 				continue
-			var kind := ColonyMap.terrain_at(cell) if mode == "city" else ExpeditionModel.field_terrain_at(cell)
-			canvas.draw_texture_rect(tile_textures[kind], tile_rect, false)
+			var outside := x < 0 or y < 0 or x >= ColonyMap.WIDTH or y >= ColonyMap.HEIGHT
+			var kind := 0 if outside else ColonyMap.terrain_at(cell) if mode == "city" else ExpeditionModel.field_terrain_at(cell)
+			canvas.draw_texture_rect(tile_textures[kind], tile_rect, false, Color(0.65, 0.72, 0.68) if outside else Color.WHITE)
+	var tree := Art.texture("iso_decor_0")
+	for diagonal in range(-FOREST_BORDER * 2, ColonyMap.WIDTH + ColonyMap.HEIGHT + FOREST_BORDER * 2 - 1):
+		for x in range(-FOREST_BORDER, ColonyMap.WIDTH + FOREST_BORDER):
+			var y := diagonal - x
+			if y < -FOREST_BORDER or y >= ColonyMap.HEIGHT + FOREST_BORDER or (x >= 0 and y >= 0 and x < ColonyMap.WIDTH and y < ColonyMap.HEIGHT):
+				continue
+			var foot := ColonyMap.iso(Vector2i(x, y))
+			var tree_rect := Rect2(foot - Vector2(78, 174), Vector2(156, 195))
+			if bounds.intersects(tree_rect):
+				canvas.draw_texture_rect(tree, tree_rect, false, Color(0.58, 0.68, 0.64))
 
 func refresh(data: Dictionary, selected_slot: int) -> void:
 	_selected_slot = selected_slot
@@ -226,7 +272,7 @@ func refresh(data: Dictionary, selected_slot: int) -> void:
 		var kind := int(data.buildings[index]) if index < data.buildings.size() else -1
 		var actor: Dictionary = workers[index]
 		var button := site_buttons[index]
-		var texture := Art.texture(KEYS[kind] if kind >= 0 and kind < KEYS.size() else "ore_site")
+		var texture := Art.texture(KEYS[kind] if kind >= 0 and kind < KEYS.size() else "bunker_1" if not model.construction_job().is_empty() and int(model.construction_job().slot) == index else "ore_site")
 		if button.texture_normal != texture:
 			button.texture_normal = texture
 			_mask(button)
@@ -263,7 +309,7 @@ func _refresh_deposits() -> void:
 			var number := GeneratedNumber.new()
 			number.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			number.size = Vector2(64, 25)
-			number.position = Vector2(52, 137)
+			number.position = Vector2(49, -16)
 			button.add_child(number)
 			deposits[id] = {"button": button, "number": number, "cell": Vector2i.ZERO, "active": false}
 		var entry: Dictionary = deposits[id]
@@ -522,6 +568,7 @@ func _set_path(actor: Dictionary, destination: Vector2) -> void:
 	actor["destination"] = destination
 
 func _process(delta: float) -> void:
+	_update_builder()
 	if model == null or not is_visible_in_tree():
 		return
 	time += maxf(0.0, delta)
@@ -578,6 +625,7 @@ func _update_parties() -> void:
 		if index >= jobs.size():
 			for actor: Dictionary in party.members:
 				actor.node.visible = false
+				actor.mount_node.visible = false
 			continue
 		var job: Dictionary = jobs[index]
 		var logical := expeditions.job_position(job)
@@ -590,31 +638,188 @@ func _update_parties() -> void:
 		party["previous"] = world_position
 		var hero_index := ["warden", "ranger", "seer", "marshal"].find(str(job.get("hero_id", "warden")))
 		var carrying := int(job.get("cargo_amount", 0)) > 0
+		var newly_visible_job := int(party.get("job_id", -1)) != int(job.get("id", -1))
+		party["job_id"] = int(job.get("id", -1))
+		var work_key := "%s:%s:%s" % [str(job.get("id", -1)), str(job.phase), str(world_position)]
+		if str(job.phase) == "mining" and str(party.get("work_positions_key", "")) != work_key:
+			party["work_positions_key"] = work_key
+			party["work_positions"] = [world_position, _party_member_position(job, 1, world_position), _party_member_position(job, 2, world_position), _party_member_position(job, 3, world_position)]
+		var mounts_key := "%s:%s:%s" % [str(job.get("id", -1)), str(job.phase), str(world_position)]
+		if str(job.get("troop_type", "")) == "cavalry" and str(job.phase) == "mining" and str(party.get("mounts_key", "")) != mounts_key:
+			party["mounts_key"] = mounts_key
+			party["mount_positions"] = []
+			var parked_cells: Array[Vector2i] = []
+			for rider in range(1, 4):
+				var parking := _park_mount_position(job, rider, world_position, parked_cells)
+				party.mount_positions.append(parking)
+				parked_cells.append(ColonyMap.cell_at(parking))
 		for member in range(4):
 			var actor: Dictionary = party.members[member]
-			actor.node.position = world_position + PARTY_OFFSETS[member]
-			actor.node.visible = mode == "region" and _visible_bounds().grow(110).has_point(actor.node.position)
-			if member == 0:
-				actor.body.texture = hero_frames[maxi(0, hero_index) * 4 + int(time * 7.0) % 4]
-				actor.body.flip_h = left
+			var actor_left := left
+			var previous_foot: Vector2 = actor.node.position
+			var target_position: Vector2 = party.work_positions[member] if str(job.phase) == "mining" else _party_member_position(job, member, world_position)
+			if newly_visible_job:
+				actor.node.position = target_position
+				actor["work_key"] = ""
+				actor["remount_done"] = true
+			var approaching_work := false
+			var remounting := false
+			if member > 0 and str(job.phase) == "mining":
+				actor["remount_done"] = false
+				approaching_work = _approach_work_site(actor, target_position, job)
+			elif member > 0 and str(job.phase) == "returning":
+				if str(job.get("troop_type", "")) == "cavalry" and not bool(actor.get("remount_done", true)) and party.has("mount_positions"):
+					remounting = _approach_work_site(actor, party.mount_positions[member - 1], job)
+					actor["remount_done"] = not remounting
+				else:
+					_approach_work_site(actor, target_position, job)
 			else:
-				var row := 4 if str(job.phase) == "mining" else (3 if left else 2) if carrying else (1 if left else 0)
+				actor.node.position = target_position
+				actor["work_key"] = ""
+			if absf(actor.node.position.x - previous_foot.x) > 0.01:
+				actor_left = actor.node.position.x < previous_foot.x
+			actor["last_render_time"] = time
+			var visual_phase := "outbound" if approaching_work else str(job.phase)
+			if member > 0 and visual_phase == "mining":
+				var deposit := expeditions.get_deposit(int(job.get("deposit_id", -1)))
+				if not deposit.is_empty():
+					var raw: Array = deposit.cell
+					actor_left = ColonyMap.iso(Vector2i(int(raw[0]), int(raw[1]))).x < actor.node.position.x
+			actor.node.visible = mode == "region" and _visible_bounds().grow(110).has_point(actor.node.position)
+			if str(job.phase) == "returning" and float(job.get("arrival_elapsed", 0.0)) > 0.0 and actor.node.position.distance_to(world_position) < 8.0:
+				actor.node.visible = false # Enters the castle; cargo waits for the tail.
+			if member == 0:
+				actor.body.texture = hero_frames[maxi(0, hero_index) * 4 + (int(time * 7.0) % 4 if str(job.phase) in ["outbound", "returning"] else 0)]
+				actor.body.flip_h = actor_left
+			else:
+				var row := 4 if visual_phase == "mining" else (3 if actor_left else 2) if carrying else (1 if actor_left else 0)
 				var troop_type := str(job.get("troop_type", "infantry"))
-				if troop_type in ["archers", "cavalry"]:
-					actor.body.texture = troop_bodies[1 if troop_type == "archers" else 2]
-					actor.body.flip_h = left
-					actor.body.size = Vector2(64, 57) if troop_type == "cavalry" else Vector2(48, 48)
-					var bob := sin(time * 9.0 + member) * 1.5 if str(job.phase) in ["outbound", "returning"] else 0.0
+				if troop_type in ["archer", "cavalry"]:
+					var action_row := 0 if troop_type == "archer" else 1
+					var action_frame := int(time * 8.0 + member) % 8 if visual_phase in ["outbound", "returning"] else 0
+					actor.body.texture = mining_frames[action_row * 8 + int(time * 7.0 + member) % 8] if visual_phase == "mining" else action_frames[action_row * 8 + action_frame]
+					if (approaching_work or remounting) and troop_type == "cavalry":
+						actor.body.texture = frames[(1 if actor_left else 0) * 8 + action_frame]
+					actor.body.flip_h = actor_left and not ((approaching_work or remounting) and troop_type == "cavalry")
+					actor.body.size = Vector2(64, 64) if visual_phase == "mining" else Vector2(76, 68) if troop_type == "cavalry" and not approaching_work and not remounting else Vector2(52, 52)
+					var bob := sin(time * 9.0 + member) * 1.5 if visual_phase in ["outbound", "returning"] else 0.0
 					actor.body.position = Vector2(-actor.body.size.x * 0.5, -actor.body.size.y + 3 + bob)
 				else:
 					actor.body.texture = frames[row * 8 + int(time * 8.0 + member) % 8]
-					actor.body.flip_h = false
-					actor.body.size = Vector2(48, 48)
-					actor.body.position = Vector2(-24, -45)
+					actor.body.flip_h = actor_left if visual_phase == "mining" else false
+					actor.body.size = Vector2(52, 52)
+					actor.body.position = Vector2(-26, -49)
 				actor.body.modulate = Color.WHITE
+			actor.mount.visible = member > 0 and str(job.get("troop_type", "")) == "cavalry" and (str(job.phase) == "mining" or remounting)
+			actor.mount_node.visible = actor.mount.visible and actor.node.visible
+			if actor.mount.visible:
+				actor.mount_node.position = party.mount_positions[member - 1]
+				actor.mount.texture = mining_frames[16 + int(time * 4.0) % 8]
 			actor.cargo_sprite.visible = carrying and member > 0
 			if carrying:
 				actor.cargo_sprite.texture = Art.texture(str(job.get("cargo_resource", "stone")))
+
+func _approach_work_site(actor: Dictionary, target: Vector2, job: Dictionary) -> bool:
+	var key := "%s:%s:%s" % [str(job.get("id", -1)), str(job.phase), str(ColonyMap.cell_at(target))]
+	if str(actor.get("work_key", "")) != key:
+		actor["work_key"] = key
+		actor["work_path"] = PackedVector2Array()
+		actor["work_index"] = 0
+		var start := ColonyMap.cell_at(actor.node.position)
+		var finish := ColonyMap.cell_at(target)
+		if expeditions.navigation.is_in_boundsv(start) and not expeditions.navigation.is_point_solid(start):
+			for cell in expeditions.navigation.get_id_path(start, finish):
+				actor.work_path.append(ColonyMap.iso(cell))
+			if not actor.work_path.is_empty():
+				actor.work_path[0] = actor.node.position # No repeated snap back to cell centers.
+	var path: PackedVector2Array = actor.get("work_path", PackedVector2Array())
+	if path.is_empty():
+		# Never teleport through a disconnected cell. Candidate selection guarantees
+		# reachability; a changed obstacle leaves the actor safely in place.
+		return actor.node.position.distance_to(target) > 1.0
+	if int(actor.get("work_index", 0)) >= path.size() and actor.node.position.distance_to(target) > 1.0:
+		actor["work_index"] = path.size() - 1
+	var elapsed := clampf(time - float(actor.get("last_render_time", time)), 0.0, 0.1)
+	var budget := elapsed * 72.0 / maxf(0.25, float(job.get("step_seconds", 1.5))) * (1.5 if str(job.phase) == "returning" else 1.0)
+	while budget > 0.0 and int(actor.work_index) < path.size():
+		var goal := target if int(actor.work_index) == path.size() - 1 else path[int(actor.work_index)]
+		var distance: float = actor.node.position.distance_to(goal)
+		if distance <= budget:
+			actor.node.position = goal
+			actor.work_index = int(actor.work_index) + 1
+			budget -= distance
+		else:
+			actor.node.position = actor.node.position.move_toward(goal, budget)
+			budget = 0.0
+	return int(actor.work_index) < path.size()
+
+func _park_mount_position(job: Dictionary, member: int, leader: Vector2, reserved: Array[Vector2i] = []) -> Vector2:
+	var occupied: Array[Vector2i] = reserved.duplicate()
+	for index in range(4):
+		occupied.append(ColonyMap.cell_at(_party_member_position(job, index, leader)))
+	var candidates: Array[Vector2] = []
+	var center := ColonyMap.cell_at(leader)
+	var worker_cell := ColonyMap.cell_at(_party_member_position(job, member, leader))
+	for radius in range(1, 4):
+		for dy in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				if maxi(absi(dx), absi(dy)) != radius:
+					continue
+				var cell := center + Vector2i(dx, dy)
+				if cell not in occupied and expeditions.navigation.is_in_boundsv(cell) and not expeditions.navigation.is_point_solid(cell):
+					var route := expeditions.navigation.get_id_path(worker_cell, cell)
+					if not route.is_empty() and route.size() <= 4:
+						candidates.append(ColonyMap.iso(cell))
+	return candidates[0] if not candidates.is_empty() else leader
+
+func _party_member_position(job: Dictionary, member: int, leader: Vector2) -> Vector2:
+	if member == 0:
+		return leader
+	if str(job.get("phase", "")) == "mining":
+		var deposit := expeditions.get_deposit(int(job.get("deposit_id", -1)))
+		if not deposit.is_empty():
+			var raw_cell: Array = deposit.cell
+			var cell := Vector2i(int(raw_cell[0]), int(raw_cell[1]))
+			var candidates: Array[Vector2] = []
+			for offset in [Vector2i.DOWN, Vector2i.RIGHT, Vector2i.UP, Vector2i.LEFT, Vector2i(1, 1), Vector2i(-1, 1), Vector2i(1, -1), Vector2i(-1, -1)]:
+				var target: Vector2i = cell + offset
+				if expeditions.navigation.is_in_boundsv(target) and not expeditions.navigation.is_point_solid(target):
+					var foot := ColonyMap.iso(target)
+					var route := expeditions.navigation.get_id_path(ColonyMap.cell_at(leader), target)
+					if foot.distance_to(leader) > 20.0 and not route.is_empty() and route.size() <= 4:
+						candidates.append(foot)
+			if member <= candidates.size():
+				return candidates[member - 1]
+			# A narrow approach can lack three separate neighboring cells. Keep
+			# the extra miner at the reachable ore-facing edge of the access cell,
+			# rather than swinging a pickaxe several cells away on an empty road.
+			var direction := signf(ColonyMap.iso(cell).x - leader.x)
+			var inset := Vector2(direction * 28.0, 14.0)
+			var fallback := leader + inset
+			if ColonyMap.cell_at(fallback) == ColonyMap.cell_at(leader):
+				return fallback
+			return leader
+	# Followers sample the actual traversed route. Fixed side offsets cut corners
+	# through blocking forests and make a valid central route visually incorrect.
+	var path: Array = job.get("path", [])
+	var cursor := leader
+	var gap := float(member) * (62.0 if str(job.get("troop_type", "infantry")) == "cavalry" else 52.0)
+	if str(job.get("phase", "")) == "returning" and int(job.get("path_index", 0)) >= path.size() - 1:
+		var hold := maxf(0.1, 3.0 * float(job.get("step_seconds", 1.5)))
+		gap *= maxf(0.0, 1.0 - float(job.get("arrival_elapsed", 0.0)) / hold)
+	var index := mini(int(job.get("path_index", 0)), path.size() - 1)
+	while index >= 0:
+		var point: Array = path[index]
+		var target := ColonyMap.iso(Vector2i(int(point[0]), int(point[1])))
+		var distance := cursor.distance_to(target)
+		if distance >= gap and distance > 0.001:
+			return cursor.move_toward(target, gap)
+		gap -= distance
+		cursor = target
+		index -= 1
+	# Newly emerging members share the castle entrance briefly; never step into
+	# unvalidated neighboring cells merely to keep a decorative formation.
+	return cursor
 
 func _move(actor: Dictionary, delta: float) -> void:
 	var budget := maxf(0.0, delta) * (110.0 + 16.0 * float(actor.tier))
@@ -682,3 +887,21 @@ func set_interaction_enabled(value: bool) -> void:
 func _order() -> void:
 	# Node2D y_sort handles sprite feet without reallocating or reparenting them.
 	pass
+
+
+func _update_builder() -> void:
+	if builder.is_empty() or model == null:
+		return
+	var job := model.construction_job()
+	builder.node.visible = mode == "city" and is_visible_in_tree() and not job.is_empty()
+	if not builder.node.visible:
+		return
+	var slot := int(job.slot)
+	var foot := ColonyMap.iso(ColonyMap.BUNKER_CELL if slot == -1 else ColonyMap.slot_cell(slot))
+	builder.node.position = foot + Vector2(-40, 35)
+	builder.body.texture = action_frames[16 + int(time * 8.0) % 8]
+	var structure := bunker if slot == -1 else site_buttons[slot]
+	construction_timer.position.y = structure.position.y - 78.0
+	var seconds := model.construction_remaining()
+	construction_timer.text = "%02d:%02d:%02d" % [seconds / 3600, (seconds / 60) % 60, seconds % 60]
+	builder.node.visible = _visible_bounds().grow(130).has_point(builder.node.position)
