@@ -1,0 +1,23 @@
+# Godot imports and editor state
+.godot/
+*.tmp
+*.bak
+
+# Build products and local tooling
+builds/
+.tools/
+.cache/
+android/build/
+
+# Credentials must stay on the build machine
+.env
+.env.*
+export_credentials.cfg
+*.keystore
+*.jks
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
