@@ -122,8 +122,12 @@ func _test_migration_and_settings() -> void:
 	file.close()
 	legacy.path = legacy_path
 	_check(legacy.load_progress() and legacy.data["version"] == 2, "version-one progress upgrades to current schema")
-	for key in ["level", "resources", "buildings", "upgrades", "best_scores", "banked_levels", "last_mine_time"]:
+	for key in ["level", "resources", "best_scores", "banked_levels", "last_mine_time"]:
 		_check(legacy.data[key] == legacy_data[key], "migration preserves " + key)
+	for key in ["buildings", "upgrades"]:
+		_check(legacy.data[key].size() == ColonyMap.SLOT_COUNT and legacy.data[key].slice(0, 9) == legacy_data[key], "migration preserves legacy plots while expanding " + key)
+	for slot in range(9, ColonyMap.SLOT_COUNT):
+		_check(legacy.data.buildings[slot] == -1 and legacy.data.upgrades[slot] == 0, "new site %d starts empty after migration" % slot)
 	_check(legacy.data["settings"] == {"reduced_effects": false, "haptics": true, "sound": true}, "old saves receive safe default settings")
 	_check(legacy.update_setting("reduced_effects", true) and legacy.update_setting("haptics", false), "known settings are saved")
 	var reloaded = Progress.new()

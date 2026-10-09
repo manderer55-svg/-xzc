@@ -8,6 +8,10 @@ const MAX_LEVEL := 1000000
 const MAX_REWARD_PERCENT := 30
 const MAX_ESSENCE_BOOST := 4
 const SETTING_KEYS := ["reduced_effects", "haptics", "sound"]
+const LEGACY_SLOT_COUNT := 9
+const SLOT_COUNT := ColonyMap.SLOT_COUNT
+const HERO_IDS := ["warden", "ranger", "seer", "marshal"]
+const TROOP_IDS := ["infantry", "archer", "cavalry"]
 
 var path: String = "user://progress.json"
 var data: Dictionary = {}
@@ -15,6 +19,7 @@ var last_error: String = ""
 var corrupt_backup_path: String = ""
 ## Award outcomes stay separate from reward amounts: zero can mean replay, locked or failed save.
 var last_award_status: String = "idle"
+var last_hero_reward: Dictionary = {}
 var _save_allowed: bool = true
 
 
@@ -23,19 +28,32 @@ func _init() -> void:
 
 
 func defaults() -> Dictionary:
+	var buildings: Array = []
+	buildings.resize(SLOT_COUNT)
+	buildings.fill(-1)
+	var upgrades: Array = []
+	upgrades.resize(SLOT_COUNT)
+	upgrades.fill(0)
 	return {
 		"version": 2,
 		"level": 1,
 		"best_scores": {},
 		"resources": {"stone": 70, "wood": 50, "essence": 5},
-		"buildings": [-1, -1, -1, -1, -1, -1, -1, -1, -1],
-		"upgrades": [0, 0, 0, 0, 0, 0, 0, 0, 0],
+		"buildings": buildings,
+		"upgrades": upgrades,
 		"banked_levels": {},
 		"last_mine_time": int(Time.get_unix_time_from_system()),
 		"settings": {"reduced_effects": false, "haptics": true, "sound": true},
 		"colony_mode": false,
 		"colony_pending": {"stone": 0, "wood": 0, "essence": 0},
 		"bunker_level": 0,
+		"expedition_mode": false,
+		"expedition_state": {},
+		"heroes": {"warden": 1},
+		"hero_state": {"cards": {"warden": 0, "ranger": 0, "seer": 0, "marshal": 0}, "chests": 0},
+		"selected_hero": "warden",
+		"selected_troop": "infantry",
+		"army": {"infantry": 20, "archer": 0, "cavalry": 0},
 	}
 
 
@@ -44,6 +62,7 @@ func load_progress() -> bool:
 	last_error = ""
 	corrupt_backup_path = ""
 	last_award_status = "idle"
+	last_hero_reward = {}
 	_save_allowed = true
 	if not FileAccess.file_exists(path):
 		return true
@@ -95,9 +114,11 @@ func award_level(level: int, score: int, won: bool, collected: Dictionary, bonus
 	var rewards := {"stone": 0, "wood": 0, "essence": 0}
 	last_error = ""
 	last_award_status = "invalid"
+	last_hero_reward = {}
 	if level < 1 or level > MAX_LEVEL:
 		return rewards
 	var before := data.duplicate(true)
+	var hero_reward: Dictionary = {}
 	var key := str(level)
 	var safe_score := clampi(score, 0, 10000000)
 	data["best_scores"][key] = maxi(int(data["best_scores"].get(key, 0)), safe_score)
@@ -129,10 +150,12 @@ func award_level(level: int, score: int, won: bool, collected: Dictionary, bonus
 			data["resources"][resource] = credited
 		data["banked_levels"][key] = true
 		data["level"] = mini(MAX_LEVEL, maxi(int(data["level"]), level + 1))
+		hero_reward = HeroModel.grant_level_cards(data, level)
 	if not save_progress():
 		data = before
 		last_award_status = "save_failed"
 		return {"stone": 0, "wood": 0, "essence": 0}
+	last_hero_reward = hero_reward
 	return rewards
 
 
@@ -155,7 +178,7 @@ func _valid_shape(value: Variant) -> bool:
 		if value.has(key) and not value[key] is Dictionary:
 			return false
 	for key in ["buildings", "upgrades"]:
-		if value.has(key) and (not value[key] is Array or value[key].size() != 9):
+		if value.has(key) and (not value[key] is Array or value[key].size() not in [LEGACY_SLOT_COUNT, SLOT_COUNT]):
 			return false
 	return true
 
@@ -163,6 +186,11 @@ func _valid_shape(value: Variant) -> bool:
 func _normalize(value: Dictionary) -> Dictionary:
 	var result := defaults()
 	result["colony_mode"] = value.get("colony_mode", false) == true
+	result["expedition_mode"] = value.get("expedition_mode", false) == true
+	var expedition_state: Variant = value.get("expedition_state", {})
+	if expedition_state is Dictionary:
+		# ExpeditionModel owns its versioned finite-deposit/job validation.
+		result["expedition_state"] = expedition_state.duplicate(true)
 	result["bunker_level"] = _number(value.get("bunker_level", 0), 0, 3, 0)
 	var pending: Variant = value.get("colony_pending", {})
 	if pending is Dictionary:
@@ -172,9 +200,12 @@ func _normalize(value: Dictionary) -> Dictionary:
 	result["last_mine_time"] = _number(value.get("last_mine_time", result["last_mine_time"]), 0, 4000000000, int(result["last_mine_time"]))
 	for key in RESOURCE_KEYS:
 		result["resources"][key] = _number(value.get("resources", {}).get(key, result["resources"][key]), 0, MAX_RESOURCE, int(result["resources"][key]))
-	for slot in range(9):
-		result["buildings"][slot] = _number(value.get("buildings", result["buildings"])[slot], -1, 5, -1)
-		result["upgrades"][slot] = _number(value.get("upgrades", result["upgrades"])[slot], 0, 3, 0) if result["buildings"][slot] >= 0 else 0
+	var buildings: Array = value.get("buildings", [])
+	var upgrades: Array = value.get("upgrades", [])
+	for slot in range(mini(SLOT_COUNT, buildings.size())):
+		result["buildings"][slot] = _number(buildings[slot], -1, 14, -1)
+		var tier: Variant = upgrades[slot] if slot < upgrades.size() else 0
+		result["upgrades"][slot] = _number(tier, 0, 3, 0) if result["buildings"][slot] >= 0 else 0
 	for key in value.get("best_scores", {}):
 		if str(key).is_valid_int() and int(key) >= 1 and int(key) <= MAX_LEVEL:
 			result["best_scores"][str(int(key))] = _number(value["best_scores"][key], 0, 10000000, 0)
@@ -187,6 +218,28 @@ func _normalize(value: Dictionary) -> Dictionary:
 		for key in SETTING_KEYS:
 			if settings.get(key) is bool:
 				result["settings"][key] = settings[key]
+	var heroes: Variant = value.get("heroes", {})
+	if heroes is Dictionary:
+		for id in HERO_IDS:
+			if heroes.has(id):
+				var level := _number(heroes[id], 0, 5, 0)
+				if level > 0:
+					result["heroes"][id] = level
+	var selected_hero := str(value.get("selected_hero", "warden"))
+	result["selected_hero"] = selected_hero if result["heroes"].has(selected_hero) else "warden"
+	var selected_troop := str(value.get("selected_troop", "infantry"))
+	result["selected_troop"] = selected_troop if selected_troop in TROOP_IDS else "infantry"
+	var army: Variant = value.get("army", {})
+	if army is Dictionary:
+		for id in TROOP_IDS:
+			result["army"][id] = _number(army.get(id, result["army"][id]), 0, 10000, int(result["army"][id]))
+	var hero_state: Variant = value.get("hero_state", {})
+	if hero_state is Dictionary:
+		result["hero_state"]["chests"] = _number(hero_state.get("chests", 0), 0, 1000000, 0)
+		var cards: Variant = hero_state.get("cards", {})
+		if cards is Dictionary:
+			for id in HERO_IDS:
+				result["hero_state"]["cards"][id] = _number(cards.get(id, 0), 0, 1000000, 0)
 	return result
 
 

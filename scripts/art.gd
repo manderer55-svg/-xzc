@@ -33,22 +33,58 @@ const DIGIT_REGIONS := [Rect2(77, 33, 266, 310), Rect2(449, 28, 200, 313),
 	Rect2(69, 733, 264, 319), Rect2(425, 730, 254, 319), Rect2(759, 757, 283, 272),
 	Rect2(1116, 773, 256, 249)]
 
+const CITY_KEYS := ["quarry", "sawmill", "shrine", "fortress", "forge", "watchtower", "townhall", "citadel", "alliance_hall", "market", "stable", "barracks", "archery", "tavern", "alliance_store"]
+const CITY_REGIONS := [Rect2(16, 22, 407, 343), Rect2(434, 28, 407, 360), Rect2(857, 44, 400, 336),
+ Rect2(15, 379, 428, 416), Rect2(463, 450, 447, 351), Rect2(943, 389, 264, 427),
+ Rect2(20, 795, 416, 415), Rect2(448, 846, 459, 364), Rect2(924, 986, 332, 214)]
+const EXTRA_REGIONS := [Rect2(66, 5, 438, 375), Rect2(569, 35, 413, 320), Rect2(1041, 61, 459, 303),
+ Rect2(62, 388, 432, 279), Rect2(553, 378, 455, 296), Rect2(1079, 383, 426, 282),
+ Rect2(72, 678, 434, 310), Rect2(572, 680, 490, 310)]
+const GROUND_REGIONS := [Rect2(3, 108, 417, 244), Rect2(419, 108, 416, 244), Rect2(836, 108, 416, 244),
+ Rect2(1, 492, 418, 249), Rect2(419, 492, 417, 249), Rect2(834, 492, 419, 249),
+ Rect2(3, 881, 416, 248), Rect2(419, 879, 416, 249), Rect2(836, 880, 416, 248)]
+const NATURE_REGIONS := [Rect2(76, 37, 305, 385), Rect2(468, 61, 389, 355), Rect2(923, 109, 368, 304), Rect2(1372, 118, 365, 294),
+ Rect2(57, 494, 348, 332), Rect2(469, 504, 397, 325), Rect2(918, 531, 387, 285), Rect2(1363, 540, 371, 290)]
+const HERO_REGIONS := [Rect2(16, 30, 442, 403), Rect2(464, 15, 434, 418), Rect2(900, 15, 426, 416), Rect2(1329, 40, 429, 393)]
+const TROOP_REGIONS := [Rect2(10, 441, 424, 432), Rect2(460, 441, 408, 428), Rect2(895, 428, 442, 444)]
+const BUNKER_REGIONS := [Rect2(22, 13, 732, 448), Rect2(790, 30, 725, 444), Rect2(17, 480, 753, 523), Rect2(781, 476, 742, 521)]
+
 static func texture(asset_name: String) -> Texture2D:
 	if _cache.has(asset_name):
 		return _cache[asset_name]
 	var result: Texture2D
-	if asset_name == "settlement_background":
+	if asset_name.begins_with("iso_tile_"):
+		result = _region(_atlas("iso_ground"), GROUND_REGIONS[clampi(int(asset_name.trim_prefix("iso_tile_")), 0, 8)])
+	elif asset_name.begins_with("iso_decor_"):
+		result = _region(_atlas("iso_nature"), NATURE_REGIONS[clampi(int(asset_name.trim_prefix("iso_decor_")), 0, 7)])
+	elif asset_name.begins_with("hero_world_"):
+		var parts := asset_name.split("_")
+		var source := _atlas("hero_world_cartoon")
+		var row := int(parts[2])
+		var starts := [0.0, 298.0, 596.0, 904.0]
+		var heights := [294.0, 294.0, 307.0, 334.0]
+		result = _region(source, Rect2(int(parts[3]) * source.get_width() / 4.0, starts[row], source.get_width() / 4.0, heights[row]))
+	elif asset_name.begins_with("hero_"):
+		result = _region(_atlas("heroes_cartoon"), HERO_REGIONS[clampi(int(asset_name.trim_prefix("hero_")), 0, 3)])
+	elif asset_name.begins_with("troop_"):
+		result = _region(_atlas("heroes_cartoon"), TROOP_REGIONS[clampi(int(asset_name.trim_prefix("troop_")), 0, 2)])
+	elif asset_name == "alliance_crest":
+		result = _region(_atlas("heroes_cartoon"), Rect2(1392, 445, 360, 418))
+	elif asset_name in CITY_KEYS:
+		var index := CITY_KEYS.find(asset_name)
+		result = _region(_atlas("city_cartoon"), CITY_REGIONS[index]) if index <= 6 else _region(_atlas("city_extra_cartoon"), EXTRA_REGIONS[index - 7])
+	elif asset_name == "settlement_background":
 		result = load(ROOT + "colony_terrain.png") as Texture2D
 	elif asset_name == "ore_site":
-		result = _grid_region("mine_structures", 0, 3, 3)
+		result = _region(_atlas("city_cartoon"), CITY_REGIONS[8])
 	elif asset_name == "warehouse":
-		result = _grid_region("mine_structures", 7, 3, 3)
+		result = _region(_atlas("city_cartoon"), CITY_REGIONS[7])
 	elif asset_name.begins_with("bunker_"):
-		result = _grid_region("bunker_stages", clampi(int(asset_name.trim_prefix("bunker_")), 0, 3), 2, 2)
+		result = _region(_atlas("bunker_cartoon"), BUNKER_REGIONS[clampi(int(asset_name.trim_prefix("bunker_")), 0, 3)])
 	elif asset_name.begins_with("worker_"):
 		var parts := asset_name.split("_")
 		var index := int(parts[1]) * 8 + int(parts[2])
-		var region := _grid_region("colony_workers", index, 8, 5)
+		var region := _grid_region("troops_cartoon", index, 8, 5)
 		region.region = region.region.grow(-4)
 		result = region
 	elif asset_name in ["background", "icon", "board_frame", "forest_background", "home_background", "ice_background", "lava_background"]:

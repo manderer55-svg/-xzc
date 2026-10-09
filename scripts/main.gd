@@ -10,12 +10,22 @@ const UI_FONT: Font = preload("res://art/fonts/DejaVuSans.ttf")
 const UI_FONT_BOLD: Font = preload("res://art/fonts/DejaVuSans-Bold.ttf")
 const TITLE_FONT: Font = preload("res://art/fonts/DejaVuSerif-Bold.ttf")
 const GEM_NAMES := ["Рубин", "Аметист", "Изумруд", "Сапфир", "Янтарь", "Лунный камень"]
-const BUILDING_KEYS := ["quarry", "sawmill", "shrine", "fortress", "forge", "watchtower"]
+const BUILDING_KEYS := Art.CITY_KEYS
 const BUILDING_NAMES := SettlementModel.TITLES
 
 var engine: MatchEngine
 var store: ProgressStore
 var settlement: SettlementModel
+var heroes: HeroModel
+var expeditions: ExpeditionModel
+var expedition_paused := false
+var colony_ui_clock := 0.0
+var selected_deposit := -1
+var colony_heading: Label
+var colony_queue_label: Label
+var colony_mode_button: TextureButton
+var colony_palette_button: TextureButton
+var management: ColonyManagementPanel
 var active_level := 1
 var busy := false
 var selected := Vector2i(-1, -1)
@@ -83,6 +93,7 @@ var settlement_return_button: TextureButton
 var modal: Control
 var modal_title: Label
 var modal_body: Label
+var hero_reward_portrait: TextureRect
 var modal_action: TextureButton
 var modal_secondary: TextureButton
 var level_modal: Control
@@ -113,12 +124,21 @@ func _ready() -> void:
 	store.load_progress()
 	settlement = SettlementModel.new()
 	settlement.configure(store)
+	heroes = HeroModel.new(store)
+	expeditions = ExpeditionModel.new()
+	expeditions.configure(settlement, heroes)
 	audio = AudioDirector.new()
 	audio.enabled = bool(store.data.settings.sound)
 	add_child(audio)
 	_build_home_screen()
 	_build_game_screen()
 	_build_settlement_screen()
+	management = ColonyManagementPanel.new()
+	management.configure(settlement, heroes)
+	management.building_chosen.connect(_choose_kind)
+	management.updated.connect(_update_settlement)
+	management.closed.connect(func(): settlement_grid.interaction_enabled = true)
+	add_child(management)
 	_build_result_modal()
 	_build_level_modal()
 	_build_utility_modal()
@@ -236,6 +256,17 @@ func _build_home_screen() -> void:
 
 
 func _process(delta: float) -> void:
+	if is_instance_valid(expeditions) and not expedition_paused:
+		var result := expeditions.advance(delta)
+		if not result.ok and current_screen == "settlement":
+			settlement_status.text = String(result.get("reason", "Не удалось сохранить поход."))
+		for delivery: Dictionary in result.get("deliveries", []):
+			if current_screen == "settlement":
+				settlement_status.text = "Отряд вернулся: %s" % _cost_text({delivery.get("resource", "stone"): delivery.get("amount", 0)})
+		colony_ui_clock += delta
+		if colony_ui_clock >= 0.5 and current_screen == "settlement":
+			colony_ui_clock = 0.0
+			_update_settlement()
 	# Motion only repositions the original generated backdrop; no artwork is drawn.
 	if current_screen != "home" or not is_instance_valid(home_background):
 		return
@@ -347,43 +378,76 @@ func _build_game_screen() -> void:
 func _build_settlement_screen() -> void:
 	settlement_screen = _new_screen()
 	settlement_screen.visible = false
-	_texture(settlement_screen, "settlement_background", Vector2.ZERO, CANVAS)
-	_frame(settlement_screen, "ui_header", Vector2(20, 18), Vector2(680, 120))
-	_label(settlement_screen, "РУДНИКИ ПЕПЕЛЬНОГО ПРЕДЕЛА", Vector2(58, 63), Vector2(604, 34), 27, GOLD, true)
-	_label(settlement_screen, "ДОБЫЧА · ДОСТАВКА · СТРОИТЕЛЬСТВО БУНКЕРА", Vector2(58, 86), Vector2(604, 28), 15, MUTED, true)
+	_frame(settlement_screen, "ui_header", Vector2(20, 18), Vector2(680, 108))
+	colony_heading = _label(settlement_screen, "ЗЕМЛИ ПЕПЕЛЬНОГО ПРЕДЕЛА", Vector2(40, 40), Vector2(640, 40), 27, GOLD, true)
+	colony_queue_label = _label(settlement_screen, "", Vector2(40, 83), Vector2(640, 30), 18, IVORY, true)
 	for i in range(3):
 		var x := 24.0 + i * 229.0
-		_frame(settlement_screen, "ui_panel", Vector2(x, 155), Vector2(214, 103))
-		_texture(settlement_screen, ["stone", "wood", "essence"][i], Vector2(x + 12, 173), Vector2(62, 62))
-		_label(settlement_screen, ["КАМЕНЬ", "ДРЕВО", "ЭССЕНЦИЯ"][i], Vector2(x + 77, 170), Vector2(132, 24), 13, MUTED)
-		resource_labels.append(_number(settlement_screen, "0", Vector2(x + 77, 191), Vector2(128, 53)))
-	_label(settlement_screen, "Выберите участок и возведите постройку", Vector2(36, 258), Vector2(648, 24), 16, IVORY, true)
+		_frame(settlement_screen, "ui_panel", Vector2(x, 132), Vector2(214, 96))
+		_texture(settlement_screen, ["stone", "wood", "essence"][i], Vector2(x + 10, 148), Vector2(58, 58))
+		_label(settlement_screen, ["КАМЕНЬ", "ДРЕВО", "ЭССЕНЦИЯ"][i], Vector2(x + 72, 145), Vector2(132, 24), 13, MUTED)
+		resource_labels.append(_number(settlement_screen, "0", Vector2(x + 72, 169), Vector2(132, 48)))
 	settlement_grid = MineColony.new()
-	settlement_grid.configure(settlement)
+	settlement_grid.position = Vector2(0, 242)
+	settlement_grid.size = Vector2(720, 668)
+	settlement_grid.configure(settlement, expeditions)
 	settlement_grid.selected.connect(_choose_slot)
-	settlement_grid.delivery.connect(func(resource: String, amount: int):
-		settlement_status.text = "На склад доставлено: %s" % _cost_text({resource: amount})
-		_update_settlement())
-	settlement_grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	settlement_grid.size = CANVAS
+	settlement_grid.deposit_selected.connect(_choose_deposit)
 	settlement_screen.add_child(settlement_grid)
-	_frame(settlement_screen, "ui_panel", Vector2(24, 670), Vector2(672, 166))
-	slot_title = _label(settlement_screen, "", Vector2(64, 695), Vector2(588, 37), 24, GOLD)
-	slot_detail = _label(settlement_screen, "", Vector2(64, 735), Vector2(588, 96), 18, IVORY)
+	_label(settlement_screen, "Перетяните карту · два пальца — масштаб", Vector2(26, 230), Vector2(520, 26), 15, IVORY)
+	_button(settlement_screen, "−", Vector2(542, 256), Vector2(72, 72), func(): settlement_grid.set_zoom(settlement_grid.camera_zoom / 1.2), true)
+	_button(settlement_screen, "+", Vector2(620, 256), Vector2(72, 72), func(): settlement_grid.set_zoom(settlement_grid.camera_zoom * 1.2), true)
+	_button(settlement_screen, "Центр", Vector2(542, 334), Vector2(150, 72), func(): settlement_grid.focus_home(), true)
+	_frame(settlement_screen, "ui_panel", Vector2(24, 918), Vector2(672, 180))
+	slot_title = _label(settlement_screen, "", Vector2(52, 932), Vector2(616, 36), 24, GOLD)
+	slot_detail = _label(settlement_screen, "", Vector2(52, 975), Vector2(616, 112), 17, IVORY)
 	slot_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	for i in range(BUILDING_KEYS.size()):
-		var key: String = BUILDING_KEYS[i]
-		var button := _button(settlement_screen, "", Vector2(24 + 229 * (i % 3), 838 + 96 * (i / 3 as int)), Vector2(214, 94), func(): _choose_kind(i), true)
-		building_choices.append(button)
-		_texture(button, key, Vector2(76, 3), Vector2(62, 54))
-		_label(button, BUILDING_NAMES[i], Vector2(1, 58), Vector2(212, 29), 16, GOLD, true)
-	build_button = _button(settlement_screen, "Построить", Vector2(24, 1034), Vector2(214, 82), _build_selected)
-	upgrade_button = _button(settlement_screen, "Улучшить", Vector2(253, 1034), Vector2(214, 82), _upgrade_selected)
-	_button(settlement_screen, "Бункер", Vector2(482, 1034), Vector2(214, 82), func(): _choose_slot(-1))
-	_button(settlement_screen, "Ускорить доставку", Vector2(24, 1122), Vector2(326, 82), _mine)
-	settlement_return_button = _button(settlement_screen, "Главная", Vector2(367, 1122), Vector2(329, 82), _close_settlement)
-	settlement_status = _label(settlement_screen, "", Vector2(32, 1211), Vector2(656, 50), 18, IVORY, true)
-	settlement_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	build_button = _button(settlement_screen, "Отправить", Vector2(24, 1104), Vector2(214, 82), _colony_action)
+	upgrade_button = _button(settlement_screen, "Герои", Vector2(253, 1104), Vector2(214, 82), _colony_secondary)
+	colony_mode_button = _button(settlement_screen, "В город", Vector2(482, 1104), Vector2(214, 82), _toggle_colony_mode)
+	colony_palette_button = _button(settlement_screen, "Постройки", Vector2(24, 1192), Vector2(214, 70), _open_build_palette, true)
+	_button(settlement_screen, "Таверна", Vector2(253, 1192), Vector2(214, 70), _open_heroes, true)
+	settlement_return_button = _button(settlement_screen, "Главная", Vector2(482, 1192), Vector2(214, 70), _close_settlement, true)
+	settlement_status = _label(settlement_screen, "", Vector2(24, 884), Vector2(672, 28), 15, IVORY, true)
+
+
+func _open_build_palette() -> void:
+	if settlement_grid.mode != "city":
+		settlement_grid.set_mode("city")
+	settlement_grid.interaction_enabled = false
+	management.open_build()
+	_update_settlement()
+
+
+func _open_heroes() -> void:
+	settlement_grid.interaction_enabled = false
+	management.open_heroes()
+
+
+func _toggle_colony_mode() -> void:
+	settlement_grid.set_mode("city" if settlement_grid.mode == "region" else "region")
+	_update_settlement()
+
+
+func _choose_deposit(id: int) -> void:
+	selected_deposit = id
+	_update_settlement()
+
+
+func _colony_action() -> void:
+	if settlement_grid.mode == "city":
+		_build_selected()
+	else:
+		var result := expeditions.dispatch(selected_deposit)
+		settlement_status.text = String(result.get("reason", "Отряд отправлен."))
+		_update_settlement()
+
+
+func _colony_secondary() -> void:
+	if settlement_grid.mode == "city":
+		_upgrade_selected()
+	else:
+		_open_heroes()
 
 
 func _build_result_modal() -> void:
@@ -396,6 +460,8 @@ func _build_result_modal() -> void:
 	modal_title = _label(modal, "", Vector2(80, 451), Vector2(560, 56), 34, GOLD, true)
 	modal_body = _label(modal, "", Vector2(100, 523), Vector2(520, 203), 23, IVORY, true)
 	modal_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hero_reward_portrait = _texture(modal, "hero_0", Vector2(548, 646), Vector2(64, 74))
+	hero_reward_portrait.visible = false
 	modal_action = _button(modal, "", Vector2(130, 735), Vector2(460, 112), _result_continue)
 	modal_secondary = _button(modal, "В цитадель", Vector2(130, 853), Vector2(460, 112), _result_settlement)
 
@@ -939,6 +1005,11 @@ func _show_result(won: bool) -> void:
 	var save_failed := store.last_award_status == "save_failed"
 	modal_title.text = "ХРОНИКА НЕ ЗАПИСАНА" if save_failed else "РИТУАЛ ЗАВЕРШЁН" if won else "СИЛА ИССЯКЛА"
 	var body := _reward_text(last_rewards) if won or save_failed else "Ходы закончились. Лучший результат сохранён."
+	if not store.last_hero_reward.is_empty() and won and not save_failed:
+		body += "\nКарта героя: %s +1" % store.last_hero_reward.get("name", store.last_hero_reward.get("hero_id", ""))
+	hero_reward_portrait.visible = not store.last_hero_reward.is_empty() and won and not save_failed
+	if hero_reward_portrait.visible:
+		hero_reward_portrait.texture = Art.texture(String(store.last_hero_reward.get("portrait", "hero_0")))
 	modal_body.text = "Уровень %d\n%d очков\n\n%s" % [active_level, engine.score, body]
 	_set_button_text(modal_action, "Повторить сохранение" if save_failed else "Следующий разлом" if won else "Попробовать ещё")
 	modal_secondary.disabled = save_failed
@@ -1021,12 +1092,16 @@ func _open_settlement() -> void:
 	home_screen.visible = false
 	game_screen.visible = false
 	settlement_screen.visible = true
-	settlement.stage_production()
+	expeditions.sync_elapsed()
+	settlement_grid.set_mode("region")
 	_set_button_text(settlement_return_button, "Главная" if settlement_origin == "home" else "К кристаллам")
 	_update_settlement()
 
 
 func _close_settlement() -> void:
+	expeditions.checkpoint()
+	management.close_panel()
+	settlement_grid.cancel_gestures()
 	if settlement_origin == "home":
 		_show_home()
 	else:
@@ -1034,46 +1109,68 @@ func _close_settlement() -> void:
 
 
 func _update_settlement() -> void:
-	var resources: Dictionary = store.data.get("resources", {})
+	if not is_instance_valid(settlement_grid):
+		return
 	for i in range(3):
-		resource_labels[i].text = str(resources.get(["stone", "wood", "essence"][i], 0))
-	var buildings: Array = store.data.get("buildings", [])
-	var upgrades: Array = store.data.get("upgrades", [])
+		resource_labels[i].text = str(store.data.resources.get(["stone", "wood", "essence"][i], 0))
 	settlement_grid.refresh(store.data, selected_slot)
+	var queue := expeditions.queue_status()
+	colony_heading.text = "ГОРОД ПЕПЕЛЬНОГО ПРЕДЕЛА" if settlement_grid.mode == "city" else "ЗЕМЛИ ПЕПЕЛЬНОГО ПРЕДЕЛА"
+	colony_queue_label.text = "30 × 30 · отряды %d/%d · замок и ратуша открывают очереди" % [queue.busy, queue.capacity]
+	_set_button_text(colony_mode_button, "Карта" if settlement_grid.mode == "city" else "В город")
+	colony_palette_button.visible = settlement_grid.mode == "city"
+	if settlement_grid.mode == "region":
+		_set_button_text(build_button, "Отправить")
+		_set_button_text(upgrade_button, "Герои")
+		upgrade_button.disabled = false
+		upgrade_button.modulate = Color.WHITE
+		var deposit := expeditions.get_deposit(selected_deposit)
+		build_button.disabled = deposit.is_empty() or not bool(deposit.get("active", false)) or queue.free <= 0
+		build_button.modulate = Color(0.5, 0.5, 0.5) if build_button.disabled else Color.WHITE
+		var names := {"stone": "Рудник камня", "wood": "Лесная делянка", "essence": "Залежь эссенции"}
+		slot_title.text = names.get(deposit.get("resource", ""), "Выберите месторождение")
+		var hero_id := String(store.data.selected_hero)
+		var hero_name := hero_id
+		for hero: Dictionary in heroes.catalog():
+			if hero.id == hero_id:
+				hero_name = hero.name
+		var details := "Герой: %s · свободных очередей: %d\n" % [hero_name, queue.free]
+		if not deposit.is_empty():
+			details += "Запас: %d · навык добычи: +%d%%\n" % [deposit.remaining, heroes.yield_bonus(hero_id, String(deposit.resource))]
+		else:
+			details += "Отряды выходят из замка и возвращают груз на склад.\n"
+		var jobs: Array[String] = []
+		for job: Dictionary in expeditions.jobs():
+			var leader := String(job.hero_id)
+			for hero: Dictionary in heroes.catalog():
+				if hero.id == leader:
+					leader = hero.name
+			jobs.append("%s: %s (%d с)" % [leader, {"outbound": "идёт", "mining": "добывает", "returning": "возвращается", "delivery_retry": "ждёт склад"}.get(job.phase, "поход"), expeditions.job_eta(job)])
+		slot_detail.text = details + (" · ".join(jobs) if not jobs.is_empty() else "Карточки героев: уровни матч-3 и сундуки таверны.")
+		return
+	_set_button_text(build_button, "Возвести этап" if selected_slot == -1 else "Построить")
+	_set_button_text(upgrade_button, "Улучшить")
 	if selected_slot == -1:
 		var stage := int(store.data.bunker_level)
 		slot_title.text = "Бункер · %s" % SettlementModel.BUNKER_STAGES[stage]
 		var cost := settlement.bunker_cost()
-		slot_detail.text = "Следующий этап: %s\nЦена: %s" % [SettlementModel.BUNKER_STAGES[mini(3, stage + 1)], _cost_text(cost)] if stage < 3 else "Бункер завершён. +2 эссенции за первое прохождение (общий предел +4)."
+		slot_detail.text = "Следующий этап: %s\nЦена: %s" % [SettlementModel.BUNKER_STAGES[mini(3, stage + 1)], _cost_text(cost)] if stage < 3 else "Бункер завершён. +2 эссенции за первое прохождение (предел +4)."
 		build_button.disabled = cost.is_empty()
 		upgrade_button.disabled = true
-		_set_button_text(build_button, "Возвести этап")
-		build_button.modulate = Color(0.5, 0.5, 0.5) if build_button.disabled else Color.WHITE
-		upgrade_button.modulate = Color(0.5, 0.5, 0.5)
-		return
-	_set_button_text(build_button, "Построить")
-	var selected_building := int(buildings[selected_slot]) if selected_slot < buildings.size() else -1
-	build_button.disabled = selected_building >= 0
-	var selected_upgrade := int(upgrades[selected_slot]) if selected_slot < upgrades.size() else 0
-	upgrade_button.disabled = selected_building < 0 or selected_upgrade >= SettlementModel.MAX_UPGRADE
+	else:
+		var kind := int(store.data.buildings[selected_slot])
+		var tier := int(store.data.upgrades[selected_slot])
+		build_button.disabled = kind >= 0
+		upgrade_button.disabled = kind < 0 or tier >= SettlementModel.MAX_UPGRADE
+		if kind < 0:
+			slot_title.text = "Участок %d · %s" % [selected_slot + 1, BUILDING_NAMES[selected_kind]]
+			slot_detail.text = "Цена: %s\n%s\n«Постройки» — выбрать другое здание." % [_cost_text(settlement.get_build_cost(selected_kind)), settlement.get_building_description(selected_kind)]
+		else:
+			slot_title.text = "%s · уровень %d" % [BUILDING_NAMES[kind], tier + 1]
+			var cost := "Максимальный уровень" if tier >= SettlementModel.MAX_UPGRADE else "Улучшение: %s" % _cost_text(settlement.get_upgrade_cost(selected_slot))
+			slot_detail.text = "%s\n%s" % [cost, settlement.get_building_description(kind)]
 	build_button.modulate = Color(0.5, 0.5, 0.5) if build_button.disabled else Color.WHITE
 	upgrade_button.modulate = Color(0.5, 0.5, 0.5) if upgrade_button.disabled else Color.WHITE
-	if selected_building < 0:
-		slot_title.text = "Участок %d · %s" % [selected_slot + 1, BUILDING_NAMES[selected_kind]]
-		var future_bonuses := ["+1 ход в каждом разломе.", "+1 ход и +5% к наградам.", "Спецкристалл в начале; +1 эссенция за победу.", "+1 урон боссу; +10% к наградам.", "Дополнительная бомба в начале каждой попытки.", "+1 урон печатям от совпадений и усилителей."]
-		slot_detail.text = "Цена: %s\n%s\nТакже добывает ресурсы для строительства." % [_cost_text(settlement.get_build_cost(selected_kind)), future_bonuses[selected_kind]]
-	else:
-		var tier := int(upgrades[selected_slot]) if selected_slot < upgrades.size() else 0
-		slot_title.text = "%s · уровень %d" % [BUILDING_NAMES[selected_building], tier + 1]
-		var upgrade_text := "Максимальный уровень" if tier >= SettlementModel.MAX_UPGRADE else "Улучшение: %s" % _cost_text(settlement.get_upgrade_cost(selected_slot))
-		var battle_effect := ""
-		for description in settlement.bonus_descriptions():
-			if description.begins_with(BUILDING_NAMES[selected_building] + ":"):
-				battle_effect = description
-				break
-		slot_detail.text = "%s\n%s\nЗа минуту: %s" % [upgrade_text, battle_effect, _cost_text(settlement.production_for_slot(selected_slot))]
-	if settlement_status.text.is_empty():
-		settlement_status.text = "Побеждайте в разломах, стройте и собирайте добычу."
 
 
 func _texture_hit_mask(key: String) -> BitMap:
@@ -1102,6 +1199,9 @@ func _cost_text(cost) -> String:
 
 
 func _choose_slot(slot: int) -> void:
+	if slot == -2:
+		slot = 3
+	settlement_grid.set_mode("city")
 	selected_slot = slot
 	_update_settlement()
 
@@ -1110,6 +1210,7 @@ func _choose_kind(kind: int) -> void:
 	if selected_slot < 0:
 		selected_slot = 4
 	selected_kind = kind
+	settlement_grid.set_mode("city")
 	_update_settlement()
 
 
@@ -1146,14 +1247,24 @@ func _mine() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_RESUMED and is_instance_valid(audio):
 		audio.set_paused(false)
+		expedition_paused = false
+		if is_instance_valid(expeditions):
+			expeditions.sync_elapsed()
 	if what == NOTIFICATION_APPLICATION_PAUSED:
+		expedition_paused = true
+		if is_instance_valid(expeditions):
+			expeditions.checkpoint()
+		if is_instance_valid(settlement_grid):
+			settlement_grid.cancel_gestures()
 		if is_instance_valid(audio):
 			audio.set_paused(true)
 		_reset_pointer()
 		_clear_hint()
 		return
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
-		if is_instance_valid(utility_modal) and utility_modal.visible:
+		if is_instance_valid(management) and management.visible:
+			management.close_panel()
+		elif is_instance_valid(utility_modal) and utility_modal.visible:
 			_close_utility()
 		elif is_instance_valid(level_modal) and level_modal.visible:
 			level_modal.visible = false
@@ -1308,52 +1419,206 @@ func _smoke_city_and_sound(preview_dir: String) -> bool:
 	var before_data := store.data.duplicate(true)
 	var before_bonuses := entry_bonuses.duplicate(true)
 	store.data.resources = {"stone": 100000, "wood": 100000, "essence": 100000}
+	await _smoke_touch_control(colony_mode_button)
+	if settlement_grid.mode != "city":
+		push_error("UI_SMOKE_CITY_MODE_FAILED")
+		return false
+	var camera_before := settlement_grid.camera_offset
+	var selection_before := selected_slot
+	await _smoke_colony_drag(Vector2(230, 320), Vector2(330, 370))
+	if settlement_grid.camera_offset.is_equal_approx(camera_before) or selected_slot != selection_before:
+		push_error("UI_SMOKE_CAMERA_DRAG_FAILED")
+		return false
+	var zoom_before := settlement_grid.camera_zoom
+	await _smoke_colony_pinch()
+	if settlement_grid.camera_zoom <= zoom_before or selected_slot != selection_before:
+		push_error("UI_SMOKE_CAMERA_PINCH_FAILED")
+		return false
 	for kind in range(BUILDING_KEYS.size()):
 		selected_slot = kind
 		store.data.buildings[kind] = -1
 		_update_settlement()
-		await _smoke_press_control(building_choices[kind])
-		if selected_kind != kind:
-			push_error("UI_SMOKE_BUILDING_CHOICE_FAILED")
+		settlement_grid.focus_slot(kind)
+		await _smoke_press_control(colony_palette_button)
+		var choice := management.build_buttons[kind]
+		await get_tree().process_frame
+		await get_tree().process_frame
+		management.scroll.ensure_control_visible(choice)
+		await get_tree().process_frame
+		await get_tree().process_frame
+		await _smoke_press_control(choice)
+		if selected_kind != kind or management.visible:
+			push_error("UI_SMOKE_BUILDING_CHOICE_FAILED kind=%d" % kind)
 			return false
-		await _smoke_press_control(build_button)
+		if kind == 3:
+			await _smoke_touch_control(build_button)
+		else:
+			await _smoke_press_control(build_button)
 		if int(store.data.buildings[kind]) != kind:
-			push_error("UI_SMOKE_BUILDING_TOUCH_FAILED")
+			push_error("UI_SMOKE_BUILDING_TOUCH_FAILED kind=%d" % kind)
 			return false
-		var artwork: TextureButton = settlement_grid.site_buttons[kind]
-		selected_slot = 8
-		await _smoke_press_control(artwork, Vector2(0.5, 0.78))
+		selected_slot = 63
+		await _smoke_colony_tap(settlement_grid.world_to_view(ColonyMap.iso(ColonyMap.slot_cell(kind))))
 		if selected_slot != kind:
-			push_error("UI_SMOKE_BUILDING_ALPHA_TOUCH_FAILED")
+			push_error("UI_SMOKE_BUILDING_GROUND_TAP_FAILED kind=%d" % kind)
 			return false
 	if entry_bonuses != before_bonuses:
 		push_error("UI_SMOKE_BUILDING_CHANGED_ACTIVE_ATTEMPT")
 		return false
-	store.data.colony_pending = {"stone": 72, "wood": 48, "essence": 24}
-	var delivered_before := settlement_grid.transported
-	for tick in range(240):
-		settlement_grid._process(0.2)
-		if tick % 12 == 0:
-			await get_tree().process_frame
-	if settlement_grid.transported <= delivered_before:
-		push_error("UI_SMOKE_WORKER_DELIVERY_FAILED")
-		return false
+	settlement_grid.focus_home()
 	await _capture_preview(preview_dir.path_join("settlement_built.png"))
+	settlement_grid.set_zoom(0.18)
+	settlement_grid.focus_home()
+	await _capture_preview(preview_dir.path_join("city_overview.png"))
+	settlement_grid.set_zoom(0.75)
 	_choose_slot(-1)
+	settlement_grid.focus_slot(-1)
 	for stage in range(1, 4):
 		await _smoke_press_control(build_button)
 		if int(store.data.bunker_level) != stage:
 			push_error("UI_SMOKE_BUNKER_STAGE_FAILED")
 			return false
 		await _capture_preview(preview_dir.path_join("bunker_%d.png" % stage))
+	_open_heroes()
+	var cards_before := 0
+	for value in store.data.hero_state.cards.values():
+		cards_before += int(value)
+	await _smoke_press_control(management.chest_button)
+	var cards_after := 0
+	for value in store.data.hero_state.cards.values():
+		cards_after += int(value)
+	if cards_after != cards_before + 3:
+		push_error("UI_SMOKE_HERO_CHEST_FAILED")
+		return false
+	await _capture_preview(preview_dir.path_join("heroes.png"))
+	store.data.hero_state.cards.ranger = maxi(3, int(store.data.hero_state.cards.ranger))
+	management.open_heroes()
+	await _smoke_press_control(management.hero_action_buttons.ranger)
+	if not store.data.heroes.has("ranger"):
+		push_error("UI_SMOKE_HERO_CARD_UNLOCK_FAILED")
+		return false
+	await _smoke_press_control(management.tab_buttons.army)
+	var army_before := int(store.data.army.infantry)
+	await _smoke_press_control(management.train_buttons.infantry)
+	if int(store.data.army.infantry) != army_before + 5:
+		push_error("UI_SMOKE_ARMY_TRAIN_FAILED")
+		return false
+	await _capture_preview(preview_dir.path_join("army.png"))
+	_notification(NOTIFICATION_WM_GO_BACK_REQUEST)
+	if management.visible or current_screen != "settlement":
+		push_error("UI_SMOKE_MANAGEMENT_BACK_FAILED")
+		return false
+	heroes.select("warden")
+	await _smoke_press_control(colony_mode_button)
+	var target: Dictionary = expeditions.deposits()[0]
+	settlement_grid.focus_deposit(int(target.id))
+	await _smoke_colony_tap(settlement_grid.world_to_view(ColonyMap.iso(Vector2i(target.cell[0], target.cell[1]))))
+	if selected_deposit != int(target.id):
+		push_error("UI_SMOKE_DEPOSIT_TAP_FAILED")
+		return false
+	await _smoke_press_control(build_button)
+	if expeditions.jobs().size() != 1:
+		push_error("UI_SMOKE_EXPEDITION_DISPATCH_FAILED")
+		return false
+	expeditions.advance(3.0)
+	var party_position := expeditions.job_position(expeditions.jobs()[0])
+	settlement_grid.set_zoom(1.0)
+	settlement_grid.focus_position(ColonyMap.iso(Vector2i(roundi(party_position.x), roundi(party_position.y))))
+	await get_tree().process_frame
+	await _capture_preview(preview_dir.path_join("expedition.png"))
+	settlement_grid.set_zoom(0.18)
+	settlement_grid.focus_home()
+	await _capture_preview(preview_dir.path_join("region_overview.png"))
+	var resource := String(target.resource)
+	var balance_before := int(store.data.resources[resource])
+	for tick in range(300):
+		expeditions.advance(0.5)
+		if tick % 30 == 0:
+			await get_tree().process_frame
+	if not expeditions.jobs().is_empty() or int(store.data.resources[resource]) <= balance_before:
+		push_error("UI_SMOKE_EXPEDITION_RETURN_FAILED")
+		return false
+	store.data.level = maxi(3, int(store.data.level))
+	store.data.banked_levels.erase("3")
+	_load_level(3)
+	reward_banked = false
+	_show_result(true)
+	if store.last_hero_reward.is_empty() or not hero_reward_portrait.visible:
+		push_error("UI_SMOKE_HERO_CARD_RESULT_FAILED")
+		return false
+	await _capture_preview(preview_dir.path_join("hero_reward.png"))
+	modal.visible = false
 	store.data = before_data
 	store.save_progress()
+	expeditions.configure(settlement, heroes)
 	_update_settlement()
 	_close_settlement()
 	audio.set_enabled(false)
 	await get_tree().create_timer(0.3).timeout
-	print("UI_SMOKE_CITY_AUDIO_OK six_buildings=true native_selection=true alpha_hits=true sound_persisted=true")
+	print("UI_SMOKE_CITY_AUDIO_OK buildings=15 map_cells=900 camera_drag=true pinch=true finite_squads=true hero_cards=true training=true bunker=true")
 	return true
+
+
+func _smoke_colony_point(local: Vector2) -> Vector2:
+	return get_viewport().get_final_transform() * settlement_grid.get_global_transform_with_canvas() * local
+
+
+func _smoke_colony_tap(local: Vector2) -> void:
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = _smoke_colony_point(local)
+		event.global_position = event.position
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		Input.parse_input_event(event)
+		await get_tree().process_frame
+
+
+func _smoke_colony_drag(start: Vector2, finish: Vector2) -> void:
+	var down := InputEventMouseButton.new()
+	down.position = _smoke_colony_point(start)
+	down.global_position = down.position
+	down.button_index = MOUSE_BUTTON_LEFT
+	down.pressed = true
+	Input.parse_input_event(down)
+	await get_tree().process_frame
+	var move := InputEventMouseMotion.new()
+	move.position = _smoke_colony_point(finish)
+	move.global_position = move.position
+	move.relative = _smoke_colony_point(finish) - _smoke_colony_point(start)
+	move.button_mask = MOUSE_BUTTON_MASK_LEFT
+	Input.parse_input_event(move)
+	await get_tree().process_frame
+	var up := InputEventMouseButton.new()
+	up.position = move.position
+	up.global_position = up.position
+	up.button_index = MOUSE_BUTTON_LEFT
+	up.pressed = false
+	Input.parse_input_event(up)
+	await get_tree().process_frame
+
+
+func _smoke_colony_pinch() -> void:
+	for index in range(2):
+		var touch := InputEventScreenTouch.new()
+		touch.index = index
+		touch.position = _smoke_colony_point(Vector2(240 + index * 160, 330))
+		touch.pressed = true
+		Input.parse_input_event(touch)
+		await get_tree().process_frame
+	var drag := InputEventScreenDrag.new()
+	drag.index = 1
+	drag.position = _smoke_colony_point(Vector2(460, 330))
+	drag.relative = _smoke_colony_point(Vector2(60, 0)) - _smoke_colony_point(Vector2.ZERO)
+	Input.parse_input_event(drag)
+	await get_tree().process_frame
+	for index in range(2):
+		var touch := InputEventScreenTouch.new()
+		touch.index = index
+		touch.position = _smoke_colony_point(Vector2(240 if index == 0 else 460, 330))
+		touch.pressed = false
+		Input.parse_input_event(touch)
+		await get_tree().process_frame
 
 
 func _capture_preview(path: String) -> void:
@@ -1365,8 +1630,7 @@ func _capture_preview(path: String) -> void:
 
 
 func _smoke_press_control(control: Control, fraction: Vector2 = Vector2(0.5, 0.5)) -> void:
-	var canvas_point := control.global_position + control.size * fraction
-	var point := get_viewport().get_final_transform() * get_global_transform_with_canvas() * canvas_point
+	var point := get_viewport().get_final_transform() * control.get_global_transform_with_canvas() * (control.size * fraction)
 	for pressed in [true, false]:
 		var event := InputEventMouseButton.new()
 		event.position = point
@@ -1374,6 +1638,17 @@ func _smoke_press_control(control: Control, fraction: Vector2 = Vector2(0.5, 0.5
 		event.button_index = MOUSE_BUTTON_LEFT
 		event.pressed = pressed
 		Input.parse_input_event(event)
+		await get_tree().process_frame
+
+
+func _smoke_touch_control(control: Control) -> void:
+	var point := get_viewport().get_final_transform() * control.get_global_transform_with_canvas() * (control.size * 0.5)
+	for pressed in [true, false]:
+		var touch := InputEventScreenTouch.new()
+		touch.index = 0
+		touch.position = point
+		touch.pressed = pressed
+		Input.parse_input_event(touch)
 		await get_tree().process_frame
 
 
